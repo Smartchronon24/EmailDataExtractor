@@ -67,7 +67,7 @@ python main.py
 ### Convert to CSV
 Transform the processed results into a spreadsheet:
 ```bash
-python test.py
+python JSON-to-CSV.py
 ```
 
 ## 🛡️ Security
