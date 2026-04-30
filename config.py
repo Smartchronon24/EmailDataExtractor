@@ -1,7 +1,7 @@
 # Configuration for Email Data Extractor
 
 # Number of emails to fetch in each run
-EMAILS_TO_FETCH = 2
+EMAILS_TO_FETCH = 3
 
 # LLM Model to use (Ollama)
 MODEL_NAME = "llama3"

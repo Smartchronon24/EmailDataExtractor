@@ -32,58 +32,59 @@ class EmailProcessor:
     def extract_email_info(self, email_text):
         """Uses Ollama to extract the intent and details from the email text."""
         
-        
         prompt = f"""
-        You are an intelligent Email Information Extraction Engine.
+        You are a high-precision Data Extraction API specializing in financial and business emails. 
+        Analyze the email content and extract structured data into the EXACT JSON format specified below.
 
-        Analyze the email and extract structured data.
+        ### REQUIRED JSON SCHEMA:
+        {{
+            "intent": "Short summary of why the email was sent",
+            "category": "One of: Invoice, Claim, Reminder, Meeting, Announcement, Personal, Other",
+            "more_details": ["Detail 1", "Detail 2", "..."],
+            "entities": {{
+                "invoice_number": ["INV-123"],
+                "invoice_amount": ["100.00"],
+                "outstanding_balance": ["50.00"],
+                "total_due": ["150.00"],
+                "dates": ["2026-01-01"],
+                "...": ["..."]
+            }},
+            "confidence_score": 0.0 to 1.0
+        }}
 
-        STRICT RULES:
-        1. ONLY return valid JSON. No explanation.
-        2. DO NOT hallucinate.
-        3. DO NOT skip values — extract everything meaningful.
-        4. DO NOT merge multiple values into one.
-        5. ALL entity values MUST be returned as LISTS.
-        6. Entity keys MUST be meaningful, lowercase, and snake_case.
-        7. If multiple values exist for the same entity, include ALL of them.
-        8. DO NOT force entities into predefined categories.
-        9. Dynamically create entity names based on content.
-        10. If unsure about an entity name, use a generic but meaningful label.
-
-        ----------------------------------
-
-        ENTITY EXTRACTION GUIDELINES:
-
-        - Extract ANY useful structured information:
-        Examples:
-        - invoice_number
-        - invoice_date
-        - due_date
-        - amount
-        - total_balance
-        - customer_name
-        - product_name
-        - order_id
-        - meeting_date
-        - location
-        - email
-        - phone_number
-
-        - DO NOT restrict to these examples.
-        - Adapt entity names based on email content.
-
-        ----------------------------------
-
-        IMPORTANT:
-
-        - If the email contains repeated structures (like tables),
-        extract each field as a list maintaining order.
+        ### EXTRACTION RULES:
+        1. **Contextual Keys**: Do NOT group all numbers into "Amount". Use specific keys like `invoice_amount`, `outstanding_balance`, `total_due`, or `tax` based on the email context.
+        2. **Multi-values**: Extract every instance. If there are multiple invoices, list all their numbers and amounts.
+        3. **Normalization**: Return dates in a consistent format if possible, but prioritize accuracy.
+        4. **NO TEXT**: Output ONLY raw JSON. No markdown blocks, no conversational filler.
         
+        EXTRACTION LOGIC:
+
+        - Identify intent from tone and keywords (e.g., reminder, complaint, update).
+        - Classify category based on context (finance, operations, personal, etc.).
+        - Extract ALL possible entities into the correct groups.
+        - If entity type is unknown, place it in "custom".
+        - Preserve duplicates when they appear multiple times.
+        - DO NOT drop partial values.
         
-        
-        
-        Email Content:
+        ### EXAMPLE:
+        Email: "Invoice INV001 for $500 is due. Your total balance is $1200."
+        Output: {{
+            "intent": "Invoice notification and balance reminder",
+            "category": "Invoice",
+            "more_details": ["Invoice INV001 issued", "Total balance is $1200"],
+            "entities": {{
+                "invoice_number": ["INV001"],
+                "invoice_amount": ["500"],
+                "total_balance": ["1200"]
+            }},
+            "confidence_score": 1.0
+        }}
+
+        ### EMAIL CONTENT:
         {email_text}
+
+        ### JSON OUTPUT:
         """
         
         try:
