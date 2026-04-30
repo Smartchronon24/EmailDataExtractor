@@ -1,0 +1,17 @@
+# Credentials
+KEYS.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data Files (Bronze and Silver layers)
+Mailcontents.json
+processed_emails.json
+*.csv
+*.zip
+
+# IDE
+.vscode/
+.idea/
