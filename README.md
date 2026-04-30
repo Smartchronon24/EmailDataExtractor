@@ -23,7 +23,7 @@ The project follows a modular **MVC-inspired** structure:
 - **`processor.py`**: The Data Transformation Service. Handles HTML cleaning and LLM extraction logic.
 - **`config.py`**: The Configuration Layer. Centralized settings for model names, thread counts, and paths.
 - **`KEYS.py`**: The Security Layer (Ignored by Git). Stores sensitive API credentials.
-- **`test.py`**: Utility script for data conversion and verification.
+- **`JSON-to-CSV.py`**: Utility script for data conversion and verification.
 
 ## 🛠️ Setup Instructions
 
