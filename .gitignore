@@ -11,6 +11,7 @@ Mailcontents.json
 processed_emails.json
 *.csv
 *.zip
+*.pdf
 
 # IDE
 .vscode/
