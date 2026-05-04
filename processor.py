@@ -33,55 +33,27 @@ class EmailProcessor:
         """Uses Ollama to extract the intent and details from the email text."""
         
         prompt = f"""
-        You are a high-precision Data Extraction API specializing in financial and business emails. 
-        Analyze the email content and extract structured data into the EXACT JSON format specified below.
+        You are a universal Data Extraction API. Analyze the content below and extract ALL meaningful information into the EXACT JSON format specified.
 
-        ### REQUIRED JSON SCHEMA:
+        ### RULES:
+        1. **Domain Agnostic**: Extract any relevant nouns/data (Names, IDs, Dates, Tasks, Hardware, Prices, etc.).
+        2. **Dynamic Entities**: Use descriptive snake_case keys in the "entities" dictionary (e.g., "lab_tasks", "invoice_number").
+        3. **No Conversational Text**: Output ONLY raw JSON. No explanations or markdown blocks.
+        4. **Schema Strictness**: Ensure the "confidence_score" is a float at the ROOT level, not inside entities.
+
+        ### REQUIRED SCHEMA:
         {{
-            "intent": "Short summary of why the email was sent",
-            "category": "One of: Invoice, Claim, Reminder, Meeting, Announcement, Personal, Other",
-            "more_details": ["Detail 1", "Detail 2", "..."],
+            "intent": "string",
+            "category": "string",
+            "key_topics": ["string"],
+            "more_details": ["string"],
             "entities": {{
-                "invoice_number": ["INV-123"],
-                "invoice_amount": ["100.00"],
-                "outstanding_balance": ["50.00"],
-                "total_due": ["150.00"],
-                "dates": ["2026-01-01"],
-                "...": ["..."]
+                "key_name": ["value"]
             }},
-            "confidence_score": 0.0 to 1.0
+            "confidence_score": 0.0
         }}
 
-        ### EXTRACTION RULES:
-        1. **Contextual Keys**: Do NOT group all numbers into "Amount". Use specific keys like `invoice_amount`, `outstanding_balance`, `total_due`, or `tax` based on the email context.
-        2. **Multi-values**: Extract every instance. If there are multiple invoices, list all their numbers and amounts.
-        3. **Normalization**: Return dates in a consistent format if possible, but prioritize accuracy.
-        4. **NO TEXT**: Output ONLY raw JSON. No markdown blocks, no conversational filler.
-        
-        EXTRACTION LOGIC:
-
-        - Identify intent from tone and keywords (e.g., reminder, complaint, update).
-        - Classify category based on context (finance, operations, personal, etc.).
-        - Extract ALL possible entities into the correct groups.
-        - If entity type is unknown, place it in "custom".
-        - Preserve duplicates when they appear multiple times.
-        - DO NOT drop partial values.
-        
-        ### EXAMPLE:
-        Email: "Invoice INV001 for $500 is due. Your total balance is $1200."
-        Output: {{
-            "intent": "Invoice notification and balance reminder",
-            "category": "Invoice",
-            "more_details": ["Invoice INV001 issued", "Total balance is $1200"],
-            "entities": {{
-                "invoice_number": ["INV001"],
-                "invoice_amount": ["500"],
-                "total_balance": ["1200"]
-            }},
-            "confidence_score": 1.0
-        }}
-
-        ### EMAIL CONTENT:
+        ### CONTENT:
         {email_text}
 
         ### JSON OUTPUT:
@@ -117,12 +89,23 @@ class EmailProcessor:
         if to_recipients:
             recipient = to_recipients[0].get('emailAddress', {}).get('address', 'Unknown')
         
+        # 1. Clean email body text
         html_body = msg.get('body', {}).get('content', '')
         clean_text = self.clean_html(html_body)
         
-        print(f"Processing: {subject}")
+        # 2. Use extracted text from documents (processed in main.py)
+        doc_text = msg.get('extracted_text_from_docs', '')
+        docs = msg.get('extracted_docs', [])
         
-        extracted_info = self.extract_email_info(clean_text)
+        # 3. Combine for LLM
+        full_context = clean_text
+        if doc_text:
+            full_context += "\n" + doc_text
+            
+        print(f"Processing: {subject} (with {len(docs)} documents)")
+        
+        # 4. Extract insights using LLM
+        extracted_info = self.extract_email_info(full_context)
         
         # Extract images passed from the fetcher
         images = msg.get('extracted_images', [])
@@ -134,10 +117,12 @@ class EmailProcessor:
             "Subject (of the email)": subject,
             "Intent": extracted_info.get("intent", ""),
             "Category": extracted_info.get("category", "General"),
+            "Key Topics": extracted_info.get("key_topics", []),
             "more details": extracted_info.get("more_details", []),
             "Entities": extracted_info.get("entities", {}),
             "Confidence Score": extracted_info.get("confidence_score", -1.0),
             "images": images,
+            "documents": [d.get("name") for d in docs],
             "processing_error": extracted_info.get("error", None)
         }
         

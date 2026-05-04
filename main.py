@@ -2,6 +2,7 @@ import msal
 import requests
 import json
 from processor import EmailProcessor
+from doc_processor import DocumentProcessor
 from KEYS import CLIENT_ID, AUTHORITY, SCOPES
 from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
@@ -73,21 +74,47 @@ class EmailController:
             
         messages = raw_data.get('value', [])
         for msg in messages:
+            msg['extracted_images'] = []
+            msg['extracted_docs'] = []
+            
             if msg.get('hasAttachments'):
                 print(f"Fetching attachments for: {msg.get('subject')}")
                 attachments = self.fetcher.fetch_attachments(access_token, msg.get('id'))
-                # Store images as base64 in the message object
-                msg['extracted_images'] = [
-                    {
-                        "name": att.get("name"),
-                        "contentType": att.get("contentType"),
-                        "base64": att.get("contentBytes")
-                    }
-                    for att in attachments 
-                    if att.get("contentType", "").startswith("image/")
-                ]
+                
+                for att in attachments:
+                    content_type = att.get("contentType", "").lower()
+                    name = att.get("name", "")
+                    content_bytes = att.get("contentBytes")
+                    
+                    if not content_bytes:
+                        continue
+                        
+                    # Filter for Images
+                    if content_type.startswith("image/"):
+                        msg['extracted_images'].append({
+                            "name": name,
+                            "contentType": content_type,
+                            "base64": content_bytes
+                        })
+                    
+                    # Filter for Documents (PDF, DOCX)
+                    elif content_type == "application/pdf" or name.endswith(".pdf"):
+                        msg['extracted_docs'].append({
+                            "name": name,
+                            "type": "pdf",
+                            "base64": content_bytes
+                        })
+                    elif content_type.find("wordprocessingml") != -1 or name.endswith(".docx"):
+                        msg['extracted_docs'].append({
+                            "name": name,
+                            "type": "docx",
+                            "base64": content_bytes
+                        })
+                
+                # Extract text from documents for the raw JSON
+                msg['extracted_text_from_docs'] = DocumentProcessor.process_docs(msg['extracted_docs'])
             else:
-                msg['extracted_images'] = []
+                msg['extracted_text_from_docs'] = ""
 
         # Save raw data (Bronze Layer)
         with open(RAW_DATA_PATH, "w", encoding="utf-8") as f:
