@@ -14,7 +14,7 @@ It transitions the project from simple document parsing to a high-reliability sy
 The system now intelligently evaluates computational cost before processing.
 - **Stage 1 (Mistral 7B)**: Performs high-level analysis to determine intent, priority, and data presence.
 - **Adaptive Toggle (`_is_complex`)**: A heuristic engine that evaluates:
-    - **Payload Size**: Emails > 600 characters are automatically marked as "Complex."
+    - **Payload Size**: Emails > 1500 characters are automatically marked as "Complex."
     - **Attachment Presence**: Any email with PDF/Docx text is routed through Stage 1.
     - **Data Density**: If more than 10 numeric patterns are detected, Stage 1 is triggered to provide context hints to Stage 2.
 - **Optimization Controls**: Use `OPTIMIZE_STAGE1` in `config.py` to switch between "Adaptive" and "Brute Force" (Always On) modes.
