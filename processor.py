@@ -168,12 +168,12 @@ class EmailProcessor:
         clean_text = self.clean_html(html_body)
     def _is_complex(self, text, has_docs):
         """Determines if an email is complex enough to warrant a two-stage pipeline."""
-        # Criteria 1: Length (approx > 100 words)
-        if len(text) > 600: return True
+        # Criteria 1: Length (approx > 800 words, ~4000 characters)
+        if len(text) > 1500: return True
         # Criteria 2: Presence of parsed document text
         if has_docs: return True
         # Criteria 3: Pattern density (lots of numbers/IDs)
-        if len(re.findall(r'\d+', text)) > 10: return True
+        if len(re.findall(r'\d+', text)) > 20: return True
         return False
 
     def process_single_email(self, msg):
@@ -285,8 +285,10 @@ class EmailProcessor:
         4. TONE & EMPATHY:
            - If progress indicates a delay, apologize sincerely.
            - If progress is positive (e.g., Ahead of Schedule), use a reassuring tone.
+           - If an invoice is 'Overdue', maintain a polite but firm professional tone. NEVER say you are "happy" about an overdue balance.
         5. MINIMALIST LOYALTY:
            - ONLY mention loyalty levels (Gold/Platinum) if explicitly stated in the DATABASE KNOWLEDGE.
+           - If the level is 'Standard' or missing, DO NOT mention loyalty at all.
            - Keep it to a single, short sentence at the very end (e.g., "As a Platinum member, we appreciate your continued loyalty."). 
            - Avoid long paragraphs about "entitlements" or "valuing your business."
         6. Output ONLY the email body text. Use double newlines (\n\n) between paragraphs.

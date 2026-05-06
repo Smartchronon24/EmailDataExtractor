@@ -239,9 +239,17 @@ class EmailController:
             processed_data.append(record)
 
         # 3. Save processed data (Silver Layer) - ALWAYS RUNS
-        with open(PROCESSED_DATA_PATH, "w", encoding="utf-8") as f:
+        import os
+        from config import PROCESSED_DATA_PATH
+        
+        # Build absolute path relative to this script so it works from anywhere
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_name = os.path.basename(PROCESSED_DATA_PATH)
+        final_path = os.path.join(script_dir, file_name)
+
+        with open(final_path, "w", encoding="utf-8") as f:
             json.dump(processed_data, f, indent=2)
-        print(f"\nPipeline complete! Results saved to {PROCESSED_DATA_PATH}")
+        print(f"\nPipeline complete! Results saved to {final_path}")
 
     def open_in_notepad(self, content):
         """Helper to open a draft in Notepad and read it back after saving."""
