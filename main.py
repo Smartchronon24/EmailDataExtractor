@@ -5,7 +5,7 @@ from processor import EmailProcessor
 from doc_processor import DocumentProcessor
 from database import InvoiceDB
 from KEYS import CLIENT_ID, AUTHORITY, SCOPES
-from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH, ENABLE_REPLY_GENERATION
+from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH, ENABLE_REPLY_GENERATION, ONLY_UNREAD
 
 class EmailFetcher:
     """
@@ -17,15 +17,18 @@ class EmailFetcher:
         self.authority = authority
         self.app = msal.PublicClientApplication(self.client_id, authority=self.authority)
 
-    def fetch_emails(self, access_token, top=1):
-        """Fetches UNREAD emails from the Inbox folder."""
+    def fetch_emails(self, access_token, top=1, only_unread=True):
+        """Fetches emails from the Inbox folder."""
         headers = {
             "Authorization": f"Bearer {access_token}"
         }
         
-        # Target only the Inbox folder for cleaner processing
-        url = f"https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={top}&$filter=isRead eq false"
-        response = requests.get(url, headers=headers)
+        # Build the URL with optional filter
+        base_url = f"https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={top}"
+        if only_unread:
+            base_url += "&$filter=isRead eq false"
+            
+        response = requests.get(base_url, headers=headers)
         
         print("API STATUS:", response.status_code)
         
@@ -103,13 +106,17 @@ class EmailController:
             return
         
         access_token = result["access_token"]
-        raw_data = self.fetcher.fetch_emails(access_token, top=emails_to_fetch)
+        raw_data = self.fetcher.fetch_emails(access_token, top=emails_to_fetch, only_unread=ONLY_UNREAD)
         
         if not raw_data:
             print("Pipeline aborted: Failed to fetch emails.")
             return
             
         messages = raw_data.get('value', [])
+        if not messages:
+            msg_type = "Unread " if ONLY_UNREAD else ""
+            print(f"\n[INFO] No {msg_type}Email available to process. Pipeline stopping.")
+            return
         for msg in messages:
             msg['extracted_text_from_docs'] = ""
             if msg.get('hasAttachments'):
@@ -135,26 +142,61 @@ class EmailController:
             
             # --- MULTI-TABLE DB LOOKUP ---
             db_context = {"invoice": None, "shipment": None, "customer": None}
-            dynamic = record.get("extraction", {}).get("entities", {}).get("dynamic_entities", {})
+            extraction = record.get("extraction", {})
+            entities = extraction.get("entities", {})
             
-            # A. Invoice Lookup
-            invoices = dynamic.get("invoices", [])
-            if invoices and isinstance(invoices, list):
-                inv_id = invoices[0].get("invoice_number")
-                if inv_id:
-                    print(f"Searching database for Invoice: {inv_id}...")
-                    db_context["invoice"] = self.db.lookup_invoice(inv_id)
+            # 1. GREEDY ID COLLECTION (AI + Regex Safety Net)
+            all_possible_inv_ids = set()
+            all_possible_trk_ids = set()
+
+            # Path A: Explicit AI Extraction
+            if entities.get("invoice_number"): all_possible_inv_ids.add(entities["invoice_number"])
+            if entities.get("tracking_number"): all_possible_trk_ids.add(entities["tracking_number"])
             
-            # B. Shipment Lookup
-            inquiry = dynamic.get("inquiry", {})
-            tracking_id = inquiry.get("tracking_number")
-            if tracking_id:
-                print(f"Searching database for Shipment: {tracking_id}...")
-                db_context["shipment"] = self.db.lookup_shipment(tracking_id)
+            # Path B: Regex Scan (The "Production Safety Net")
+            import re
+            from config import INVOICE_PREFIXES, TRACKING_PREFIXES
             
-            # C. Customer Lookup (by sender email)
+            body_text = msg.get('body', {}).get('content', '')
+            
+            # Helper to build dynamic regex pattern
+            def get_pattern(prefixes):
+                if isinstance(prefixes, str): prefixes = [prefixes]
+                pattern = "|".join(prefixes)
+                return rf"(?:{pattern})-?\d+"
+
+            inv_matches = re.findall(get_pattern(INVOICE_PREFIXES), body_text, re.IGNORECASE)
+            trk_matches = re.findall(get_pattern(TRACKING_PREFIXES), body_text, re.IGNORECASE)
+            
+            for m in inv_matches: all_possible_inv_ids.add(m.upper())
+            for m in trk_matches: all_possible_trk_ids.add(m.upper())
+
+            # 2. DATABASE SEARCH
+            inv_id = None
+            if all_possible_inv_ids:
+                inv_id = list(all_possible_inv_ids)[0]
+                print(f"Searching database for Invoice: {inv_id}...")
+                db_context["invoice"] = self.db.lookup_invoice(inv_id)
+            
+            trk_id = None
+            if all_possible_trk_ids:
+                trk_id = list(all_possible_trk_ids)[0]
+            elif db_context["invoice"]:
+                # Fallback: Get tracking from invoice record if not in email
+                trk_id = db_context["invoice"].get("tracking_id")
+            
+            if trk_id:
+                print(f"Searching database for Shipment: {trk_id}...")
+                db_context["shipment"] = self.db.lookup_shipment(trk_id)
+            
+            # 3. CUSTOMER CONTEXT
             sender_email = record['metadata']['sender']
             db_context["customer"] = self.db.lookup_customer(sender_email)
+            
+            # Final touch: If DB lookup failed to find a customer, 
+            # use the name Llama 3 might have found in the email!
+            if not db_context["customer"]:
+                db_context["customer"] = {"name": extraction.get("customer_name") or "Valued Customer"}
             
             # Stage 4 & 5: Reply Generation & Review (Respecting Killswitch)
             if self.enable_reply:

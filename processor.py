@@ -1,4 +1,5 @@
 import json
+import re
 from bs4 import BeautifulSoup
 import ollama
 import concurrent.futures
@@ -115,23 +116,21 @@ class EmailProcessor:
         {email_text}
         </email_content>
         
-        ### SCHEMA (Flexible):
+        ### SCHEMA (Strict):
         {{
-          "intent": "string", "category": "string", "summary": "string",
+          "intent": "string", 
+          "category": "string", 
+          "summary": "string",
           "entities": {{
+            "invoice_number": "string or null",
+            "tracking_number": "string or null",
             "dynamic_entities": {{ 
-                "// NOTE": "Only include relevant keys below based on content",
-                "invoices": [{{ 
-                    "invoice_number": "", 
-                    "totals": {{ "subtotal": 0.0, "tax": 0.0, "total": 0.0, "balance": 0.0 }},
-                    "line_items": [{{ "item": "", "qty": 0, "total": 0.0 }}]
-                }}],
-                "feedback": {{ "sentiment": "", "points": [] }},
-                "inquiry": {{ "topic": "", "question": "", "tracking_number": "", "order_id": "" }}
+                "invoices": [{{ "invoice_number": "", "total": 0.0 }}],
+                "inquiry": {{ "tracking_number": "", "order_id": "" }}
             }},
-            "structured_patterns": {{ "numbers": [], "dates": [], "ids": [] }}
+            "structured_patterns": {{ "ids": ["string"] }}
           }},
-          "document_insights": [], "confidence_score": 0.0
+          "confidence_score": 0.0
         }}
         
 
@@ -167,22 +166,72 @@ class EmailProcessor:
         # 1. Clean email body text
         html_body = msg.get('body', {}).get('content', '')
         clean_text = self.clean_html(html_body)
+    def _is_complex(self, text, has_docs):
+        """Determines if an email is complex enough to warrant a two-stage pipeline."""
+        # Criteria 1: Length (approx > 100 words)
+        if len(text) > 600: return True
+        # Criteria 2: Presence of parsed document text
+        if has_docs: return True
+        # Criteria 3: Pattern density (lots of numbers/IDs)
+        if len(re.findall(r'\d+', text)) > 10: return True
+        return False
+
+    def process_single_email(self, msg):
+        """Processes a single email and returns a structured record."""
+        subject = msg.get('subject', 'No Subject')
+        sender = msg.get('from', {}).get('emailAddress', {}).get('address', 'Unknown')
+        recipient = msg.get('toRecipients', [{}])[0].get('emailAddress', {}).get('address', 'Unknown')
+        received_at = msg.get('receivedDateTime', '')
         
-        # 2. Use extracted text from documents
+        # 1. Prepare text
+        body_content = msg.get('body', {}).get('content', '')
+        clean_text = self.clean_html(body_content)
+        
+        # 2. Determine if Stage 1 should run
+        from config import ENABLE_STAGE1, OPTIMIZE_STAGE1
+        
         doc_text = msg.get('extracted_text_from_docs', '')
-        docs = msg.get('extracted_docs', [])
         
-        # 3. Combine for LLM
+        # Default: Don't run
+        use_stage1 = False
+        
+        if ENABLE_STAGE1:
+            if OPTIMIZE_STAGE1:
+                # Adaptive Mode: Check complexity
+                use_stage1 = self._is_complex(clean_text, bool(doc_text))
+            else:
+                # Brute-force Mode: Always run
+                use_stage1 = True
+        
+        # 3. Combine context
         full_context = clean_text
         if doc_text:
             full_context += "\n" + doc_text
             
-        print(f"Processing: {subject} (with {len(docs)} documents)")
+        # --- TERMINAL FEEDBACK ---
+        status_label = "STAGE 1: ALWAYS ON" if ENABLE_STAGE1 and not OPTIMIZE_STAGE1 else "STAGE 1: OPTIMIZED"
+        if not ENABLE_STAGE1: status_label = "STAGE 1: DISABLED"
         
-        # --- TWO STAGE PIPELINE ---
+        print(f"\n--- Processing: {subject} ---")
+        print(f"Mode: {status_label}")
         
-        # STAGE 1: Mistral Analysis
-        analysis_result = self.analyze_email_mistral(full_context)
+        if ENABLE_STAGE1 and OPTIMIZE_STAGE1 and use_stage1:
+            print(">>> [ADAPTIVE] Complexity threshold reached! Triggering Stage 1 (Mistral)...")
+        elif ENABLE_STAGE1 and OPTIMIZE_STAGE1 and not use_stage1:
+            print(">>> [ADAPTIVE] Simple email detected. Bypassing Stage 1 to save time.")
+        
+        # --- DYNAMIC PIPELINE ---
+        
+        # STAGE 1: Mistral Analysis (Only if enabled and/or complex)
+        analysis_result = {}
+        if use_stage1:
+            analysis_result = self.analyze_email_mistral(full_context)
+        else:
+            reason = "Bypassed (Optimization)" if ENABLE_STAGE1 else "Disabled (Killswitch)"
+            analysis_result = {
+                "email_type": "automated_check", "priority_level": "normal",
+                "processing_hint": f"Stage 1 {reason}."
+            }
         
         # STAGE 2: Llama 3 Extraction
         extraction_result = self.extract_entities_llama(full_context, analysis_result)
@@ -208,21 +257,12 @@ class EmailProcessor:
         summary = extraction_result.get("summary", "")
         
         # Build a consolidated status message from DB context
-        # This part ensures we pass ONLY facts to the LLM to prevent hallucinations
-        status_info = []
-        if db_context.get('invoice'):
-            inv = db_context['invoice']
-            status_info.append(f"INVOICE {inv['invoice_id']}: Status={inv['status']}, Balance={inv['balance_amount']}")
-            if inv.get('shipment_status'):
-                delay_str = f"DELAY REASON: {inv['delay_reason']}" if inv['delay_reason'] else "No Delay"
-                status_info.append(f"SHIPMENT: Status={inv['shipment_status']}, Est Delivery={inv['estimated_delivery']}, {delay_str}")
-            if inv.get('loyalty_level'):
-                status_info.append(f"CUSTOMER PROFILE: Loyalty={inv['loyalty_level']}, Name={inv['customer_name']}")
-
-        db_knowledge = " | ".join(status_info) if status_info else "No specific database match found."
+        db_knowledge = "NO DATABASE MATCH FOUND."
+        if db_context.get("invoice") or db_context.get("shipment") or db_context.get("customer"):
+            db_knowledge = f"DATABASE RECORDS:\n{json.dumps(db_context, indent=2)}"
 
         prompt = f"""
-        Draft a professional email reply based on the DATABASE KNOWLEDGE provided.
+        You are a professional customer support agent. Generate a concise email reply based ONLY on the DATABASE KNOWLEDGE.
         
         ### DATABASE KNOWLEDGE (TRUTH):
         {db_knowledge}
@@ -231,20 +271,25 @@ class EmailProcessor:
         {summary}
         
         ### WRITING RULES:
-        1. STRUCTURE: 
-           - Start with a professional greeting.
-           - ADDRESS THE MAIN INQUIRY FIRST (e.g., if they asked about a delay, explain the delay immediately).
+        1. CONCISENESS & TONE:
+           - BE DIRECT. Do not use filler phrases like "According to our records" or "I am writing to update you." or "Here is a concise email reply based on the database knowledge:"
+           - Merge status and progress into a single fluid sentence (e.g., "Your shipment ID is currently Status and Progress.") but keep loyalty appreciation to a separate line at the end.
+           - Maintain a helpful, premium tone. Avoid Long sentences, break them down into sentences of around 10 words. 
+        2. STRUCTURE: 
+           - Professional greeting.
+           - ADDRESS THE MAIN INQUIRY IMMEDIATELY.
            - Provide specific data (Dates, IDs, Amounts) from the DATABASE KNOWLEDGE.
            - Add loyalty appreciation ONLY at the end.
-        2. TONE & EMPATHY:
-           - If a shipment is DELAYED, you MUST apologize. NEVER say 'I am happy to inform you of a delay'.
-           - Use a professional and helpful tone.
-        3. ACCURACY:
-           - ONLY mention loyalty levels (Gold/Platinum) if the DATABASE KNOWLEDGE explicitly states it. 
-           - If the level is 'Standard', do not mention it at all.
-        4. Output ONLY the email body text.
-        5. DO NOT include any introductory or concluding remarks like "Here is the reply" or "I hope this helps".
-        6. IMPORTANT: Use double newlines (\n\n) between paragraphs to ensure proper formatting.
+        3. NO BRACKETS:
+           - NEVER use parentheses or brackets in the final output, especially not around the loyalty text.
+        4. TONE & EMPATHY:
+           - If progress indicates a delay, apologize sincerely.
+           - If progress is positive (e.g., Ahead of Schedule), use a reassuring tone.
+        5. MINIMALIST LOYALTY:
+           - ONLY mention loyalty levels (Gold/Platinum) if explicitly stated in the DATABASE KNOWLEDGE.
+           - Keep it to a single, short sentence at the very end (e.g., "As a Platinum member, we appreciate your continued loyalty."). 
+           - Avoid long paragraphs about "entitlements" or "valuing your business."
+        6. Output ONLY the email body text. Use double newlines (\n\n) between paragraphs.
         """
         
         try:
@@ -258,9 +303,11 @@ class EmailProcessor:
             # --- CLEANUP: Strip common AI introductory phrases ---
             prefixes_to_remove = [
                 "Here is a professional email reply",
+                "Here is the concise email reply",
+                "Here is a concise email reply",
                 "Here is the email body",
                 "Based on the database knowledge",
-                "Dear [Customer],", # If it hallucinates the placeholder
+                "Dear [Customer],", 
                 "Dear Customer,"
             ]
             

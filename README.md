@@ -1,136 +1,86 @@
-# EmailDataExtractor 📧🤖
+# EmailDataExtractor 📧🤖 (Branch: replyAND2stage)
 
-An intelligent, automated email processing pipeline that fetches emails from Microsoft Outlook, extracts structured insights using a Two-Stage Local LLM pipeline, verifies data against a MySQL database, and facilitates human-in-the-loop reviews before sending automated replies.
+An advanced, production-grade email automation suite. This version (v2.0) introduces an **Adaptive Multi-Stage Pipeline**, a **Deterministic Regex Safety Net**, and a **Context-Aware Reply Engine**. 
+
+It transitions the project from simple document parsing to a high-reliability system capable of handling complex enterprise workflows.
 
 ## 📊 Project Workflow
 
 ![Project Workflow](workflow.png)
 
-## 🚀 Key Features
+## 🛠️ Major Technical Implementations
 
-- **Two-Stage AI Pipeline**: 
-    - **Stage 1 (Mistral)**: Intent classification and routing.
-    - **Stage 2 (Llama 3)**: Deep entity extraction (Invoices, Shipments, Feedback).
-- **MySQL Database Integration**: Real-time verification of invoice status, customer loyalty levels, and shipment tracking.
-- **Human-in-the-Loop (HITL)**: Interactive terminal review loop with **Notepad integration** for editing AI-generated drafts.
-- **Automated Fetching & Dispatch**: Fetches unread emails from the Inbox and sends threaded replies via Microsoft Graph API.
-- **Security Hardened**: Protected against **Prompt Injection** attacks using XML-style delimiters and strict system rules.
-- **Data Layering**:
-    - **Bronze Layer**: Raw JSON fetched from API.
-    - **Silver Layer**: Structured extraction results.
-    - **Gold Layer**: Verified records and dispatched replies.
+### 1. Adaptive Two-Stage Orchestration ⚡
+The system now intelligently evaluates computational cost before processing.
+- **Stage 1 (Mistral 7B)**: Performs high-level analysis to determine intent, priority, and data presence.
+- **Adaptive Toggle (`_is_complex`)**: A heuristic engine that evaluates:
+    - **Payload Size**: Emails > 600 characters are automatically marked as "Complex."
+    - **Attachment Presence**: Any email with PDF/Docx text is routed through Stage 1.
+    - **Data Density**: If more than 10 numeric patterns are detected, Stage 1 is triggered to provide context hints to Stage 2.
+- **Optimization Controls**: Use `OPTIMIZE_STAGE1` in `config.py` to switch between "Adaptive" and "Brute Force" (Always On) modes.
+
+### 2. Deterministic Regex Safety Net 🛡️
+To solve the problem of AI non-determinism, we implemented a rule-based fail-safe.
+- **Pattern Matching**: Scans raw text for customizable ID patterns (e.g., `INV-123`, `TRK-456`).
+- **Dynamic Configuration**: `INVOICE_PREFIXES` and `TRACKING_PREFIXES` in `config.py` allow you to add new identifiers (like `BILL` or `PO`) without touching the core code.
+- **Hybrid Merging**: The system merges results from both the AI and the Regex scanner, ensuring critical IDs are never missed.
+
+### 3. Smart Database Layer & Normalization 🗄️
+The database has been optimized for performance and data integrity.
+- **Normalization**: Removed redundant `customer_name` from the `invoices` table. Name data is now pulled via a high-performance `JOIN` on `customer_id`.
+- **Semantic Column Shift**: Renamed `delay_reason` to `progress`. This changes the AI's bias from always apologizing to providing neutral, factual status updates (e.g., "Enroute and Before Schedule").
+- **Indexing**: Added unique indexes on `email` and foreign key indexes on `customer_id` and `tracking_id` for sub-millisecond lookups.
+
+### 4. Enterprise-Grade Reply Engine ✍️
+The Stage 3 Generator is now governed by strict professional writing rules.
+- **Conciseness**: Forbidden from using filler phrases like "According to our records."
+- **Minimalist Loyalty**: Replaced long loyalty paragraphs with single-sentence, premium shoutouts (e.g., "As a Platinum member, we appreciate your continued loyalty.").
+- **Post-Processing Cleanup**: A Python-based cleanup layer automatically strips AI-generated filler lines (e.g., "Here is the concise email reply...") before the draft is presented for review.
+- **Context Injection**: Passes the full `db_context` as a structured JSON block to the AI, allowing it to "see" the relationships between invoices and shipments.
 
 ## 🏗️ Architecture
 
-The project follows a modular **MVC-inspired** structure, separating API communication, AI processing, and data persistence.
-
-### 1. System Overview
 ```mermaid
 graph TD
     subgraph External
         Outlook[MS Outlook / Graph API]
     end
 
-    subgraph "Local Backend (Python)"
+    subgraph "Orchestration Layer"
         Main[main.py: Controller]
-        Processor[processor.py: AI Engine]
-        DB[database.py: Data Layer]
-        Docs[doc_processor.py: Attachment Service]
+        Adapter[Adaptive Toggle: _is_complex]
+        Regex[Regex Safety Net: re.findall]
     end
 
-    subgraph "Local Intelligence"
-        Mistral[Mistral: Intent Analysis]
-        Llama[Llama 3: Deep Extraction]
+    subgraph "AI Engine (Ollama)"
+        Mistral[Mistral: Stage 1 Analyst]
+        Llama[Llama 3: Stage 2 Extractor]
+        Reply[Llama 3: Stage 3 Generator]
     end
 
-    subgraph Persistence
-        MySQL[(MySQL Database)]
+    subgraph "Data Layer"
+        DB[database.py: MySQL Logic]
+        Docs[doc_processor.py: Attachment Parser]
     end
 
-    Outlook -- Fetch Unread --> Main
-    Main -- Extract Text --> Docs
-    Main -- Stage 1 Analysis --> Mistral
-    Main -- Stage 2 Extraction --> Llama
-    Main -- Verify Records --> MySQL
-    MySQL -- Contextual Data --> Main
-    Main -- Human Review --> Notepad[Notepad Editor]
-    Notepad -- Approved Reply --> Outlook
+    Outlook -- Fetch --> Main
+    Main -- Check --> Adapter
+    Adapter -- Trigger --> Mistral
+    Main -- Scan --> Regex
+    Main -- Context --> Llama
+    Main -- Truth --> DB
+    DB -- JSON Context --> Reply
+    Reply -- Draft --> UI[Human Review Loop]
 ```
 
-### 2. Two-Stage AI Pipeline
-To ensure high accuracy and security, extraction is handled in two distinct phases:
+## ⚙️ Configuration Parameters (`config.py`)
 
-```mermaid
-graph LR
-    A[Raw Email + Docs] --> B[Stage 1: Mistral]
-    B -- "Intent: Invoice/Shipment" --> C[Stage 2: Llama 3]
-    C -- "Strict JSON Schema" --> D[Structured Output]
-    D -- "Prompt Injection Guard" --> E[Verified Data]
-```
-
-### 3. Database Schema (ERD)
-The system uses a relational model to link billing data with logistics and customer profiles:
-
-```mermaid
-erDiagram
-    CUSTOMERS ||--o{ INVOICES : "has"
-    SHIPMENTS ||--o{ INVOICES : "linked to"
-    CUSTOMERS ||--o{ SHIPMENTS : "belongs to"
-
-    CUSTOMERS {
-        int customer_id PK
-        string name
-        string email
-        string loyalty_level
-    }
-    INVOICES {
-        string invoice_id PK
-        int customer_id FK
-        string tracking_id FK
-        decimal balance
-        string status
-    }
-    SHIPMENTS {
-        string tracking_id PK
-        int customer_id FK
-        string status
-        text delay_reason
-    }
-```
-
-## 🛠️ Setup Instructions
-
-### 1. Prerequisites
-- Python 3.11+
-- [Ollama](https://ollama.com/) with `llama3` and `mistral` models.
-- MySQL Server (local or remote).
-- Microsoft Azure App registration (`Mail.Read`, `Mail.Send`, `Mail.ReadWrite`).
-
-### 2. Installation
-```bash
-git clone https://github.com/Smartchronon24/EmailDataExtractor.git
-cd EmailDataExtractor
-pip install msal requests beautifulsoup4 ollama mysql-connector-python pandas
-```
-
-### 3. Database Setup
-Run the provided SQL scripts in MySQL Workbench to create the `customers`, `invoices`, and `shipments` tables.
-
-## 📂 Usage
-
-### Run the Pipeline
-```bash
-python main.py
-```
-- The script will fetch unread emails.
-- It will perform database lookups for any detected Invoice IDs or Tracking Numbers.
-- If `ENABLE_REPLY_GENERATION` is True, it will prompt you to **Approve**, **Skip**, or **Edit** (via Notepad) the reply.
-
-## 🛡️ Security
-This project uses multi-layer security:
-- **Prompt Injection Guards**: Strict rules prevent the LLM from obeying instructions embedded in email bodies.
-- **Local Inference**: All data processing stays on your machine via Ollama.
-- **Credential Isolation**: `KEYS.py` is excluded from version control to protect your API secrets.
+| Variable | Description |
+|----------|-------------|
+| `ENABLE_STAGE1` | Global killswitch for Mistral analysis. |
+| `OPTIMIZE_STAGE1` | Enables/Disables the Adaptive complexity toggle. |
+| `INVOICE_PREFIXES` | List of prefixes for the Regex ID scanner (e.g., `["INV", "BILL"]`). |
+| `TRACKING_PREFIXES` | List of prefixes for the Shipment scanner (e.g., `["TRK", "SHIP"]`). |
 
 ---
 *Created by [Smartchronon24](https://github.com/Smartchronon24)*

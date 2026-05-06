@@ -22,17 +22,20 @@ class InvoiceDB:
             return None
 
     def lookup_invoice(self, invoice_id):
-        """Looks up invoice details including linked customer and shipment info."""
+        """
+        Looks up invoice details using a JOIN to pull customer 
+        and shipment data from their respective source-of-truth tables.
+        """
         conn = self.get_db_connection()
         if not conn: return None
         try:
             cursor = conn.cursor(dictionary=True)
-            # Use JOINs to get linked data automatically
+            # We fetch specific columns for efficiency
             query = """
                 SELECT 
-                    i.*, 
-                    c.name as customer_name, c.loyalty_level,
-                    s.status as shipment_status, s.estimated_delivery, s.delay_reason
+                    i.invoice_id, i.invoice_date, i.total_amount, i.balance_amount, i.status,
+                    c.name as customer_name, c.loyalty_level, c.email as customer_email,
+                    s.status as shipment_status, s.estimated_delivery, s.progress, s.tracking_id
                 FROM invoices i
                 LEFT JOIN customers c ON i.customer_id = c.customer_id
                 LEFT JOIN shipments s ON i.tracking_id = s.tracking_id
@@ -56,7 +59,9 @@ class InvoiceDB:
         try:
             cursor = conn.cursor(dictionary=True)
             query = """
-                SELECT s.*, c.name as customer_name, c.loyalty_level
+                SELECT 
+                    s.tracking_id, s.status, s.estimated_delivery, s.progress,
+                    c.name as customer_name, c.loyalty_level
                 FROM shipments s
                 LEFT JOIN customers c ON s.customer_id = c.customer_id
                 WHERE s.tracking_id = %s
@@ -64,8 +69,13 @@ class InvoiceDB:
             cursor.execute(query, (tracking_id,))
             result = cursor.fetchone()
             return self._clean_result(result)
+        except mysql.connector.Error as err:
+            print(f"Query Error: {err}")
+            return None
         finally:
-            if conn.is_connected(): cursor.close(); conn.close()
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
 
     def lookup_customer(self, email):
         """Looks up customer profile by email."""
