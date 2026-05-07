@@ -1,86 +1,89 @@
-# EmailDataExtractor 📧🤖 (Branch: replyAND2stage)
+# EmailDataExtractor 📧🤖 (Branch: RAG&UIUXv1)
 
-An advanced, production-grade email automation suite. This version (v2.0) introduces an **Adaptive Multi-Stage Pipeline**, a **Deterministic Regex Safety Net**, and a **Context-Aware Reply Engine**. 
+An advanced, production-grade AI Email Orchestration Platform. This version transforms the project from a terminal-based script into a **RAG-enhanced Flask Dashboard** with a professional "Human-in-the-Loop" workflow.
 
-It transitions the project from simple document parsing to a high-reliability system capable of handling complex enterprise workflows.
+## 📊 Project Workflow v2.0
 
-## 📊 Project Workflow
+![Project Workflow](WorkFlowV2.png)
 
-![Project Workflow](workflow.png)
+## 🌟 Key Features
 
-## 🛠️ Major Technical Implementations
+### 1. RAG-Enhanced Intelligence (ChromaDB) 🧠
+- **Semantic Memory**: Uses ChromaDB to store and retrieve past email communications.
+- **Contextual Grounding**: Automatically injects relevant historical context into the AI's reply generator to ensure consistency with previous brand messaging.
+- **Data Firewall**: A strict prompt engineering layer that prevents "context bleeding"—ensuring the AI never uses names or IDs from old emails in new replies.
 
-### 1. Adaptive Two-Stage Orchestration ⚡
-The system now intelligently evaluates computational cost before processing.
-- **Stage 1 (Mistral 7B)**: Performs high-level analysis to determine intent, priority, and data presence.
-- **Adaptive Toggle (`_is_complex`)**: A heuristic engine that evaluates:
-    - **Payload Size**: Emails > 1500 characters are automatically marked as "Complex."
-    - **Attachment Presence**: Any email with PDF/Docx text is routed through Stage 1.
-    - **Data Density**: If more than 10 numeric patterns are detected, Stage 1 is triggered to provide context hints to Stage 2.
-- **Optimization Controls**: Use `OPTIMIZE_STAGE1` in `config.py` to switch between "Adaptive" and "Brute Force" (Always On) modes.
+### 2. Premium Flask Dashboard 🖥️
+- **Dual-Panel UI**: A sleek, glassmorphism-themed interface for browsing fetched emails and performing deep analysis.
+- **Live Preview**: Read raw emails with preserved formatting (newlines/paragraphs) before triggering the AI.
+- **Interactive Editing**: Directly edit AI-generated drafts in a content-editable editor before sending.
 
-### 2. Deterministic Regex Safety Net 🛡️
-To solve the problem of AI non-determinism, we implemented a rule-based fail-safe.
-- **Pattern Matching**: Scans raw text for customizable ID patterns (e.g., `INV-123`, `TRK-456`).
-- **Dynamic Configuration**: `INVOICE_PREFIXES` and `TRACKING_PREFIXES` in `config.py` allow you to add new identifiers (like `BILL` or `PO`) without touching the core code.
-- **Hybrid Merging**: The system merges results from both the AI and the Regex scanner, ensuring critical IDs are never missed.
+### 3. Human-in-the-Loop Workflow 🤝
+- **Phase 1: Fact Extraction**: Trigger AI to extract Intent, Category, Summary, and look up matching records in MySQL.
+- **Phase 2: Review**: Verify the AI's understanding and database matches (Invoices/Shipments).
+- **Phase 3: Generate & Approve**: Trigger Llama 3 to draft the final reply once the context is verified.
 
-### 3. Smart Database Layer & Normalization 🗄️
-The database has been optimized for performance and data integrity.
-- **Normalization**: Removed redundant `customer_name` from the `invoices` table. Name data is now pulled via a high-performance `JOIN` on `customer_id`.
-- **Semantic Column Shift**: Renamed `delay_reason` to `progress`. This changes the AI's bias from always apologizing to providing neutral, factual status updates (e.g., "Enroute and Before Schedule").
-- **Indexing**: Added unique indexes on `email` and foreign key indexes on `customer_id` and `tracking_id` for sub-millisecond lookups.
+### 4. Hybrid Fact-Checking Engine 🛡️
+- **Deterministic Regex Safety Net**: Scans for customizable ID patterns (INV, TRK, etc.) to catch what the LLM might miss.
+- **MySQL Source-of-Truth**: Validates every extracted invoice and shipment ID against your live production database.
 
-### 4. Enterprise-Grade Reply Engine ✍️
-The Stage 3 Generator is now governed by strict professional writing rules.
-- **Conciseness**: Forbidden from using filler phrases like "According to our records."
-- **Minimalist Loyalty**: Replaced long loyalty paragraphs with single-sentence, premium shoutouts (e.g., "As a Platinum member, we appreciate your continued loyalty.").
-- **Post-Processing Cleanup**: A Python-based cleanup layer automatically strips AI-generated filler lines (e.g., "Here is the concise email reply...") before the draft is presented for review.
-- **Context Injection**: Passes the full `db_context` as a structured JSON block to the AI, allowing it to "see" the relationships between invoices and shipments.
-
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```mermaid
 graph TD
-    subgraph External
+    subgraph "External & UI"
         Outlook[MS Outlook / Graph API]
+        UI[Flask Dashboard: HTML/JS/CSS]
     end
 
     subgraph "Orchestration Layer"
-        Main[main.py: Controller]
-        Adapter[Adaptive Toggle: _is_complex]
-        Regex[Regex Safety Net: re.findall]
+        App[app.py: Web API]
+        Main[main.py: Logic Controller]
+        Cache[Local Result Cache: JS Memory]
     end
 
-    subgraph "AI Engine (Ollama)"
-        Mistral[Mistral: Stage 1 Analyst]
-        Llama[Llama 3: Stage 2 Extractor]
-        Reply[Llama 3: Stage 3 Generator]
+    subgraph "AI & Vector Layer"
+        Chroma[ChromaDB: Vector RAG]
+        Ollama[Ollama: Mistral & Llama 3]
     end
 
-    subgraph "Data Layer"
-        DB[database.py: MySQL Logic]
-        Docs[doc_processor.py: Attachment Parser]
+    subgraph "Relational Data"
+        MySQL[MySQL: Business Truth]
     end
 
-    Outlook -- Fetch --> Main
-    Main -- Check --> Adapter
-    Adapter -- Trigger --> Mistral
-    Main -- Scan --> Regex
-    Main -- Context --> Llama
-    Main -- Truth --> DB
-    DB -- JSON Context --> Reply
-    Reply -- Draft --> UI[Human Review Loop]
+    Outlook -- Fetch --> App
+    App -- UI Render --> UI
+    UI -- Process Trigger --> App
+    App -- Query --> Main
+    Main -- Retrieval --> Chroma
+    Main -- Lookup --> MySQL
+    Main -- Extraction --> Ollama
+    Ollama -- JSON --> App
+    App -- Store --> Cache
 ```
 
-## ⚙️ Configuration Parameters (`config.py`)
+## ⚙️ Setup & Configuration
 
+### Dependencies
+```bash
+pip install flask msal ollama mysql-connector-python chromadb beautifulsoup4
+```
+
+### Configuration (`config.py`)
 | Variable | Description |
 |----------|-------------|
-| `ENABLE_STAGE1` | Global killswitch for Mistral analysis. |
-| `OPTIMIZE_STAGE1` | Enables/Disables the Adaptive complexity toggle. |
-| `INVOICE_PREFIXES` | List of prefixes for the Regex ID scanner (e.g., `["INV", "BILL"]`). |
-| `TRACKING_PREFIXES` | List of prefixes for the Shipment scanner (e.g., `["TRK", "SHIP"]`). |
+| `ENABLE_STAGE1` | Toggle Mistral Stage 1 analysis. |
+| `STAGE2_MODEL` | Set your main extraction model (e.g., `llama3`). |
+| `INVOICE_PREFIXES` | Add custom invoice prefixes (e.g., `["BILL", "INV"]`). |
+| `CHROMA_PATH` | Directory for the Vector database. |
+
+## 🚀 Running the Platform
+1. Ensure your MySQL server and Ollama are running.
+2. Start the web server:
+   ```bash
+   python app.py
+   ```
+3. Visit `http://localhost:5000` in your browser.
 
 ---
 *Created by [Smartchronon24](https://github.com/Smartchronon24)*
