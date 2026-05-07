@@ -12,7 +12,11 @@ processed_emails.json
 *.csv
 *.zip
 *.pdf
+workflow.png
 
 # IDE
 .vscode/
 .idea/
+
+# VectorDB (ChromaDB persistent storage — auto-generated, do not commit)
+chroma_store/

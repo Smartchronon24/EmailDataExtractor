@@ -34,3 +34,18 @@ DB_NAME = "email_extraction_db"
 # ID Patterns for Regex Safety Net
 INVOICE_PREFIXES = ["INV", "BILL"]
 TRACKING_PREFIXES = ["TRK", "SHIP"]
+
+# ─────────────────────────────────────────────
+# VectorDB + RAG Configuration (ChromaDB)
+# ─────────────────────────────────────────────
+# Where ChromaDB stores its data on disk (local, free, no internet needed)
+VECTOR_DB_PATH = "chroma_store"
+
+# Ollama embedding model (run: ollama pull nomic-embed-text)
+EMBEDDING_MODEL = "nomic-embed-text"
+
+# Number of similar past emails to retrieve for RAG context
+RAG_TOP_K = 3
+
+# Master toggle for RAG: set False to skip VectorDB entirely
+ENABLE_RAG = True

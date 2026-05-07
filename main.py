@@ -4,18 +4,32 @@ import json
 from processor import EmailProcessor
 from doc_processor import DocumentProcessor
 from database import InvoiceDB
+from vectorstore import VectorStore
 from KEYS import CLIENT_ID, AUTHORITY, SCOPES
-from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH, ENABLE_REPLY_GENERATION, ONLY_UNREAD
+from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH, ENABLE_REPLY_GENERATION, ONLY_UNREAD, ENABLE_RAG
 
 class EmailFetcher:
     """
     Handles authentication and fetching data from Microsoft Graph API.
     Acts as the Data Model/Service in the MVC architecture.
     """
-    def __init__(self, client_id, authority):
+    def __init__(self, client_id, authority, scopes):
         self.client_id = client_id
         self.authority = authority
+        self.scopes = scopes
         self.app = msal.PublicClientApplication(self.client_id, authority=self.authority)
+
+    def get_access_token(self):
+        """Attempts to acquire a token from the cache, then interactively."""
+        accounts = self.app.get_accounts()
+        if accounts:
+            result = self.app.acquire_token_silent(self.scopes, account=accounts[0])
+            if result:
+                return result.get('access_token')
+
+        # Fallback to interactive login (Standard Desktop/Terminal mode)
+        result = self.app.acquire_token_interactive(scopes=self.scopes)
+        return result.get('access_token')
 
     def fetch_emails(self, access_token, top=1, only_unread=True):
         """Fetches emails from the Inbox folder."""
@@ -102,9 +116,17 @@ class EmailController:
         self.authority = AUTHORITY
         self.scopes = SCOPES
         
-        self.fetcher = EmailFetcher(self.client_id, self.authority)
+        self.fetcher = EmailFetcher(self.client_id, self.authority, self.scopes)
         self.processor = EmailProcessor()
         self.db = InvoiceDB()
+
+        # Initialize VectorStore (ChromaDB)
+        if ENABLE_RAG:
+            self.vectorstore = VectorStore()
+            print("[VectorDB] RAG is ENABLED.")
+        else:
+            self.vectorstore = None
+            print("[VectorDB] RAG is DISABLED (ENABLE_RAG=False in config).")
         
         # Security Block for Stage 3
         if not ONLY_UNREAD:
@@ -122,12 +144,10 @@ class EmailController:
         print(f"Starting pipeline to fetch and process {emails_to_fetch} emails...")
         
         # 1. Fetch raw emails
-        result = self.fetcher.app.acquire_token_interactive(scopes=self.scopes)
-        if "access_token" not in result:
+        access_token = self.fetcher.get_access_token()
+        if not access_token:
             print("Authentication failed.")
             return
-        
-        access_token = result["access_token"]
         raw_data = self.fetcher.fetch_emails(access_token, top=emails_to_fetch, only_unread=ONLY_UNREAD)
         
         if not raw_data:
@@ -219,10 +239,25 @@ class EmailController:
             # use the name Llama 3 might have found in the email!
             if not db_context["customer"]:
                 db_context["customer"] = {"name": extraction.get("customer_name") or "Valued Customer"}
-            
+
+            # ─── VECTOR DB: STORE (after Stage 2 + DB lookup) ───────────────
+            if self.vectorstore:
+                self.vectorstore.store(
+                    message_id=msg.get('id', record['metadata']['timestamp']),
+                    raw_email=msg,
+                    extraction=extraction,
+                    db_context=db_context
+                )
+
+            # ─── VECTOR DB: QUERY (RAG context for Stage 3) ─────────────────
+            rag_context = None
+            if self.vectorstore:
+                query_text = f"{record['metadata']['subject']} {extraction.get('summary', '')}"
+                rag_context = self.vectorstore.query(query_text)
+
             # Stage 4 & 5: Reply Generation & Review (Respecting Killswitch)
             if self.enable_reply:
-                draft_reply = self.processor.generate_reply_llama(record.get("extraction", {}), db_context)
+                draft_reply = self.processor.generate_reply_llama(record.get("extraction", {}), db_context=db_context, rag_context=rag_context)
                 current_draft = draft_reply
                 
                 while True:

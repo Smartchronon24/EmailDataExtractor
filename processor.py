@@ -116,23 +116,18 @@ class EmailProcessor:
         {email_text}
         </email_content>
         
-        ### SCHEMA (Strict):
+        ### SCHEMA (Strict - Fill every field):
         {{
-          "intent": "string", 
-          "category": "string", 
-          "summary": "string",
+          "intent": "thank_you OR shipping_inquiry OR billing_inquiry OR complaint", 
+          "category": "invoice OR shipment OR general", 
+          "summary": "Short description of email content",
+          "customer_name": "Tony Stark (Example)",
           "entities": {{
-            "invoice_number": "string or null",
-            "tracking_number": "string or null",
-            "dynamic_entities": {{ 
-                "invoices": [{{ "invoice_number": "", "total": 0.0 }}],
-                "inquiry": {{ "tracking_number": "", "order_id": "" }}
-            }},
-            "structured_patterns": {{ "ids": ["string"] }}
+            "invoice_number": "INV123 (Example)",
+            "tracking_number": "TRK123 (Example)"
           }},
-          "confidence_score": 0.0
+          "confidence_score": 1.0
         }}
-        
 
         ### STAGE 1 CONTEXT:
         {json.dumps(stage1_output)}
@@ -249,39 +244,54 @@ class EmailProcessor:
         }
         
         return final_record
-    def generate_reply_llama(self, extraction_result, db_context):
+    def generate_reply_llama(self, extraction_result, db_context, rag_context=None):
         """
         STAGE 3: Generate a professional email reply based on extraction and full DB context.
         """
         intent = extraction_result.get("intent", "general")
         summary = extraction_result.get("summary", "")
         
-        # Build a consolidated status message from DB context
+        # Build a consolidated status message from the CURRENT DB context
         db_knowledge = "NO DATABASE MATCH FOUND."
         if db_context.get("invoice") or db_context.get("shipment") or db_context.get("customer"):
             db_knowledge = f"DATABASE RECORDS:\n{json.dumps(db_context, indent=2)}"
 
+        # Build RAG context block from ChromaDB retrieved documents
+        rag_block = "NO PAST CONTEXT AVAILABLE."
+        if rag_context:
+            rag_items = "\n---\n".join(rag_context)
+            rag_block = rag_items
+
         prompt = f"""
-        You are a professional customer support agent. Generate a concise email reply based ONLY on the DATABASE KNOWLEDGE.
+        You are a professional customer support agent. Generate a concise email reply.
         
-        ### DATABASE KNOWLEDGE (TRUTH):
+        ### DATA FIREWALL (CRITICAL):
+        - NEVER use the names, email addresses, dates, or IDs from the "PAST SIMILAR EMAILS" section. Those belong to OTHER customers.
+        - ONLY use the Names, IDs, and Statuses found in "CURRENT DATABASE KNOWLEDGE".
+        - If "CURRENT DATABASE KNOWLEDGE" shows a Shipment is "Delivered" but the Invoice is "Overdue", acknowledge the delivery but DO NOT ask for payment if the customer is just saying thank you.
+
+        ### CURRENT DATABASE KNOWLEDGE (THE ONLY SOURCE FOR FACTS):
         {db_knowledge}
-        
+
         ### ORIGINAL CUSTOMER EMAIL SUMMARY:
-        {summary}
+        Intent: {intent}
+        Summary: {summary}
+        
+        ### PAST SIMILAR EMAILS (USE FOR TONE/VOCABULARY ONLY - IGNORE ALL NAMES/IDS):
+        {rag_block}
         
         ### WRITING RULES:
         1. CONCISENESS & TONE:
-           - BE DIRECT. Do not use filler phrases like "According to our records" or "I am writing to update you." or "Here is a concise email reply based on the database knowledge:"
-           - Merge status and progress into a single fluid sentence (e.g., "Your shipment ID is currently Status and Progress.") but keep loyalty appreciation to a separate line at the end.
-           - Maintain a helpful, premium tone. Avoid Long sentences, break them down into sentences of around 10 words. 
-        2. STRUCTURE: 
+           - BE DIRECT. Do not use filler phrases like "According to our records" or "I am writing to update you."
+           - Merge status and progress into a single fluid sentence. Keep loyalty appreciation to a separate line at the end.
+           - Maintain a helpful, premium tone. Break long sentences into ~10-word chunks.
+        2. STRUCTURE:
            - Professional greeting.
            - ADDRESS THE MAIN INQUIRY IMMEDIATELY.
-           - Provide specific data (Dates, IDs, Amounts) from the DATABASE KNOWLEDGE.
+           - Provide specific data (Dates, IDs, Amounts) from the CURRENT DATABASE KNOWLEDGE.
            - Add loyalty appreciation ONLY at the end.
         3. NO BRACKETS:
-           - NEVER use parentheses or brackets in the final output, especially not around the loyalty text.
+           - NEVER use parentheses or brackets in the final output.
         4. TONE & EMPATHY:
            - If progress indicates a delay, apologize sincerely.
            - If progress is positive (e.g., Ahead of Schedule), use a reassuring tone.

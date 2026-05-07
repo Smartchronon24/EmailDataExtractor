@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Orchestrator AI | Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="zap" class="logo-icon"></i>
+                <span>EmailAI</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+                <a href="#" class="nav-item"><i data-lucide="inbox"></i> Inbox</a>
+                <a href="#" class="nav-item"><i data-lucide="database"></i> VectorDB</a>
+                <a href="#" class="nav-item"><i data-lucide="settings"></i> Settings</a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="status-badge">
+                    <span class="status-dot"></span> Ollama: Llama 3
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="search-wrapper">
+                    <i data-lucide="search"></i>
+                    <input type="text" placeholder="Search emails...">
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" id="btn-fetch">
+                        <i data-lucide="refresh-cw"></i> Fetch Emails
+                    </button>
+                </div>
+            </header>
+
+            <div class="dashboard-grid">
+                <!-- Inbox List -->
+                <section class="panel inbox-panel">
+                    <div class="panel-header">
+                        <h2>Unread Messages</h2>
+                        <span class="badge" id="inbox-count">0</span>
+                    </div>
+                    <div class="email-list" id="email-list-container">
+                        <div class="empty-state">
+                            <i data-lucide="mail"></i>
+                            <p>No emails fetched yet.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Processing Detail -->
+                <section class="panel detail-panel" id="detail-view">
+                    <!-- Local Loader -->
+                    <div id="loader" class="loader-overlay hidden">
+                        <div class="spinner"></div>
+                        <p>AI is analyzing context...</p>
+                    </div>
+
+                    <div class="empty-state">
+                        <i data-lucide="mouse-pointer-2"></i>
+                        <p>Select an email to begin processing</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
