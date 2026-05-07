@@ -48,6 +48,16 @@ class EmailFetcher:
         payload = {"isRead": True}
         requests.patch(url, headers=headers, json=payload)
 
+    def mark_as_unread(self, access_token, message_id):
+        """Marks a specific message as unread in Outlook."""
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
+        payload = {"isRead": False}
+        requests.patch(url, headers=headers, json=payload)
+
     def fetch_attachments(self, access_token, message_id):
         """Fetches attachments for a specific message."""
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -87,6 +97,7 @@ class EmailController:
     Links the EmailFetcher with the EmailProcessor and Database.
     """
     def __init__(self):
+        from config import ONLY_UNREAD
         self.client_id = CLIENT_ID
         self.authority = AUTHORITY
         self.scopes = SCOPES
@@ -94,7 +105,18 @@ class EmailController:
         self.fetcher = EmailFetcher(self.client_id, self.authority)
         self.processor = EmailProcessor()
         self.db = InvoiceDB()
-        self.enable_reply = ENABLE_REPLY_GENERATION
+        
+        # Security Block for Stage 3
+        if not ONLY_UNREAD:
+            print("\n" + "!"*65)
+            print("WARNING: ONLY_UNREAD is set to False in config.py")
+            print("Processing both read and unread emails.")
+            print("Stage 3 (Reply Generation) is BLOCKED to prevent duplicate replies.")
+            print("To enable sending replies, set ONLY_UNREAD = True in config.py.")
+            print("!"*65 + "\n")
+            self.enable_reply = False
+        else:
+            self.enable_reply = ENABLE_REPLY_GENERATION
 
     def run_pipeline(self, emails_to_fetch=2):
         print(f"Starting pipeline to fetch and process {emails_to_fetch} emails...")

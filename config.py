@@ -1,5 +1,5 @@
-import KEYS
 # Configuration for Email Data Extractor
+import KEYS
 
 # Number of emails to fetch in each run
 EMAILS_TO_FETCH = 1
