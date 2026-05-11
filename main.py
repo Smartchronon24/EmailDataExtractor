@@ -140,6 +140,27 @@ class EmailController:
         else:
             self.enable_reply = ENABLE_REPLY_GENERATION
 
+    def reload_config(self):
+        """Reloads the configuration from disk and updates sub-components instantly."""
+        import importlib
+        import config
+        importlib.reload(config)
+        
+        # Re-initialize Processor with new models
+        self.processor = EmailProcessor(
+            stage1_model=config.STAGE1_MODEL,
+            stage2_model=config.STAGE2_MODEL
+        )
+        
+        # Re-initialize VectorStore if needed
+        if config.ENABLE_RAG:
+            from vectorstore import VectorStore
+            self.vectorstore = VectorStore()
+        else:
+            self.vectorstore = None
+            
+        print(f">>> Configuration Reloaded: S1:{config.STAGE1_MODEL} | S2:{config.STAGE2_MODEL} | RAG:{config.ENABLE_RAG}")
+
     def run_pipeline(self, emails_to_fetch=2):
         print(f"Starting pipeline to fetch and process {emails_to_fetch} emails...")
         
@@ -205,7 +226,9 @@ class EmailController:
             def get_pattern(prefixes):
                 if isinstance(prefixes, str): prefixes = [prefixes]
                 pattern = "|".join(prefixes)
-                return rf"(?:{pattern})-?\d+"
+                # \b ensures it starts at a word boundary (prevents "INV" in "INVITATION")
+                # \s* allows optional spaces between prefix and number
+                return rf"\b(?:{pattern})\s*-?\d+\b"
 
             inv_matches = re.findall(get_pattern(INVOICE_PREFIXES), body_text, re.IGNORECASE)
             trk_matches = re.findall(get_pattern(TRACKING_PREFIXES), body_text, re.IGNORECASE)

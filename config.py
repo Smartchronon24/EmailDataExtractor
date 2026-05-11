@@ -1,5 +1,19 @@
 # Configuration for Email Data Extractor
 import KEYS
+import json
+import os
+
+# --- DYNAMIC SETTINGS OVERRIDE ---
+_settings_path = "settings.json"
+if os.path.exists(_settings_path):
+    try:
+        with open(_settings_path, "r") as f:
+            _overrides = json.load(f)
+            # Inject overrides into global namespace
+            for k, v in _overrides.items():
+                globals()[k] = v
+    except Exception as e:
+        print(f"Error loading settings.json: {e}")
 
 # Number of emails to fetch in each run
 EMAILS_TO_FETCH = 1
@@ -8,6 +22,10 @@ ONLY_UNREAD = True                          # Set to True to fetch only unread e
 # LLM Models to use (Ollama)
 STAGE1_MODEL = "mistral"
 STAGE2_MODEL = "llama3"
+STAGE3_MODEL = "mistral"
+
+# UI Settings
+THEME = "dark"
 
 # Pipeline Controls (Killswitches)
 ENABLE_STAGE1 = True               # Global toggle for Stage 1

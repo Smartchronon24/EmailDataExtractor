@@ -21,58 +21,184 @@
                 <span>EmailAI</span>
             </div>
             <nav class="nav-menu">
-                <a href="#" class="nav-item active"><i data-lucide="layout-dashboard"></i> Dashboard</a>
-                <a href="#" class="nav-item"><i data-lucide="inbox"></i> Inbox</a>
-                <a href="#" class="nav-item"><i data-lucide="database"></i> VectorDB</a>
-                <a href="#" class="nav-item"><i data-lucide="settings"></i> Settings</a>
+                <a href="#" class="nav-item active" id="nav-dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+                <a href="#" class="nav-item" id="nav-settings"><i data-lucide="settings"></i> Settings</a>
             </nav>
+
+            <!-- Sidebar pipeline removed to prevent ID conflict -->
+
             <div class="sidebar-footer">
                 <div class="status-badge">
-                    <span class="status-dot"></span> Ollama: Llama 3
+                    <span class="status-dot"></span> Ollama: Online
                 </div>
             </div>
         </aside>
 
         <!-- Main Content -->
         <main class="main-content">
-            <header class="top-bar">
+            <header class="header">
+                <div class="logo-section" style="display: none; align-items: center; gap: 12px;">
+                    <div class="logo-icon" style="background: var(--primary); color: white; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px;">
+                        <i data-lucide="zap" style="width: 20px; height: 20px;"></i>
+                    </div>
+                    <h2 style="font-size: 18px; font-weight: 700; color: white; margin: 0;">EmailAI</h2>
+                </div>
+                
                 <div class="search-wrapper">
                     <i data-lucide="search"></i>
                     <input type="text" placeholder="Search emails...">
                 </div>
-                <div class="actions">
+                <div class="user-actions">
+                    <button class="btn btn-secondary mobile-menu-btn" id="btn-mobile-menu" style="display: none; padding: 10px;"><i data-lucide="menu"></i></button>
                     <button class="btn btn-primary" id="btn-fetch">
-                        <i data-lucide="refresh-cw"></i> Fetch Emails
+                        <i data-lucide="refresh-cw"></i>
+                        <span>Fetch Emails</span>
                     </button>
                 </div>
             </header>
 
-            <div class="dashboard-grid">
-                <!-- Inbox List -->
-                <section class="panel inbox-panel">
-                    <div class="panel-header">
-                        <h2>Unread Messages</h2>
-                        <span class="badge" id="inbox-count">0</span>
-                    </div>
-                    <div class="email-list" id="email-list-container">
-                        <div class="empty-state">
-                            <i data-lucide="mail"></i>
-                            <p>No emails fetched yet.</p>
+            <div id="view-dashboard">
+                <div class="dashboard-grid">
+                    <!-- Inbox List -->
+                    <section class="panel inbox-panel">
+                        <div class="panel-header">
+                            <h2>Unread Messages</h2>
+                            <span class="badge" id="inbox-count">0</span>
                         </div>
-                    </div>
-                </section>
+                        <div class="email-list" id="email-list-container">
+                            <div class="empty-state">
+                                <i data-lucide="mail"></i>
+                                <p>No emails fetched yet.</p>
+                            </div>
+                        </div>
+                    </section>
 
-                <!-- Processing Detail -->
-                <section class="panel detail-panel" id="detail-view">
-                    <!-- Local Loader -->
-                    <div id="loader" class="loader-overlay hidden">
-                        <div class="spinner"></div>
-                        <p>AI is analyzing context...</p>
+                    <!-- Processing Detail -->
+                    <section class="panel detail-panel" id="detail-view">
+                        <!-- Local Loader -->
+                        <div id="loader" class="loader-overlay hidden">
+                            <div class="spinner"></div>
+                            <p>AI is analyzing context...</p>
+                        </div>
+
+                        <div class="empty-state">
+                            <i data-lucide="mouse-pointer-2"></i>
+                            <p>Select an email to begin processing</p>
+                        </div>
+                    </section>
+
+                    <!-- Pipeline Flow (NEW) -->
+                    <section class="panel pipeline-panel">
+                        <div class="panel-header">
+                            <h2 style="display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="activity" style="width: 18px; height: 18px; color: var(--primary);"></i>
+                                Intelligence Pipeline
+                            </h2>
+                        </div>
+                        <div id="pipeline-flow" class="pipeline-flow">
+                            <div class="empty-pipeline" style="color: var(--text-dim); font-size: 11px; font-style: italic; opacity: 0.5;">Select an email to start...</div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+
+            <div id="view-settings" class="hidden">
+                <section class="panel" style="max-width: 1000px; margin: 0 auto; padding: 32px; height: auto; min-height: 100%;">
+                    <div class="panel-header" style="margin-bottom: 32px;">
+                        <h1 style="font-size: 28px; font-weight: 800; letter-spacing: -0.5px; color: white;">Application Settings</h1>
+                        <button class="btn btn-primary" id="btn-save-settings">Save Changes</button>
                     </div>
 
-                    <div class="empty-state">
-                        <i data-lucide="mouse-pointer-2"></i>
-                        <p>Select an email to begin processing</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px;">
+                        <!-- Column 1: AI Models -->
+                        <div>
+                            <h3 style="margin-bottom: 16px; color: var(--primary);">AI Pipeline Models</h3>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 1 Model (Mistral/Intent)</label>
+                                <select id="set-stage1-model" class="input-field" style="width: 100%;">
+                                    <option value="mistral">Mistral (Optimized)</option>
+                                    <option value="llama3">Llama 3 (Detailed)</option>
+                                    <option value="gemma" disabled>Gemma (Not installed)</option>
+                                    <option value="phi3" disabled>Phi-3 (Not installed)</option>
+                                </select>
+                            </div>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 2 Model (Llama/Extraction)</label>
+                                <select id="set-stage2-model" class="input-field" style="width: 100%;">
+                                    <option value="llama3">Llama 3 (High Precision)</option>
+                                    <option value="mistral">Mistral (Fast)</option>
+                                    <option value="gemma" disabled>Gemma (Not installed)</option>
+                                </select>
+                            </div>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 3 Model (Reply Generation)</label>
+                                <select id="set-stage3-model" class="input-field" style="width: 100%;">
+                                    <option value="mistral">Mistral (Recommended)</option>
+                                    <option value="llama3">Llama 3 (Creative)</option>
+                                    <option value="gemma" disabled>Gemma (Not installed)</option>
+                                </select>
+                            </div>
+                            
+                            <h3 style="margin-bottom: 16px; color: #fbbf24; margin-top: 32px;">UI Customization</h3>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Application Theme</label>
+                                <select id="set-theme" class="input-field" style="width: 100%;">
+                                    <option value="dark">Pro Dark (High Contrast)</option>
+                                    <option value="light">Clean Light (Minimalist)</option>
+                                </select>
+                            </div>
+                            
+                            <h3 style="margin-bottom: 16px; color: var(--accent); margin-top: 32px;">Pipeline Toggles</h3>
+                            <div style="display: flex; flex-direction: column; gap: 12px;">
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                    <input type="checkbox" id="set-enable-stage1"> 
+                                    Enable Stage 1 Analysis
+                                    <span class="info-icon" data-tooltip="Mistral identifies intent & complexity before deep extraction."><i data-lucide="info"></i></span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                    <input type="checkbox" id="set-optimize-stage1"> 
+                                    Adaptive Complexity Optimization
+                                    <span class="info-icon" data-tooltip="Only runs Stage 1 for long or complex emails to save time."><i data-lucide="info"></i></span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                    <input type="checkbox" id="set-enable-rag"> 
+                                    Enable RAG (Vector Search)
+                                    <span class="info-icon" data-tooltip="Search past historical emails in ChromaDB for context."><i data-lucide="info"></i></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Column 2: Regex & Performance -->
+                        <div>
+                            <h3 style="margin-bottom: 16px; color: #10b981;">Regex Safety Net</h3>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Invoice Prefixes (Comma separated)</label>
+                                <input type="text" id="set-inv-prefixes" class="input-field" style="width: 100%;" placeholder="INV, BILL">
+                            </div>
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-size: 14px;">Tracking Prefixes (Comma separated)</label>
+                                <input type="text" id="set-trk-prefixes" class="input-field" style="width: 100%;" placeholder="TRK, SHIP">
+                            </div>
+
+                            <h3 style="margin-bottom: 16px; color: var(--text-dim); margin-top: 32px;">
+                                Engine Performance
+                                <span class="info-icon" data-tooltip="Control how many emails are processed in parallel."><i data-lucide="info"></i></span>
+                            </h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 8px; font-size: 14px;">Max Workers</label>
+                                    <input type="number" id="set-max-workers" class="input-field" style="width: 100%;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 8px; font-size: 14px;">Max Retries</label>
+                                    <input type="number" id="set-max-retries" class="input-field" style="width: 100%;">
+                                </div>
+                            </div>
+                            <p style="font-size: 11px; color: var(--text-dim); font-style: italic;">
+                                <i data-lucide="alert-circle" style="width: 12px; height: 12px; vertical-align: middle;"></i>
+                                Recommendation: Set Max Workers to 1 for local testing to avoid Ollama resource conflicts.
+                            </p>
+                        </div>
                     </div>
                 </section>
             </div>
