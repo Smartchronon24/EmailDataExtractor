@@ -152,6 +152,57 @@ def process_email_stream():
         from flask import current_app
         print(f"PIPELINE: Starting stream for email ID {msg.get('id')}")
         try:
+            # --- DUPLICATE GUARD ---
+            sender = msg.get('from', {}).get('emailAddress', {}).get('address')
+            conv_id = msg.get('conversationId')
+            msg_id = msg.get('id')
+            subject = msg.get('subject', '')
+            body_preview = msg.get('bodyPreview', '')
+
+            # 1. Check MySQL for exact match or thread-level reply
+            dup_info = None
+            dup_status = controller.email_store.check_duplicate(conv_id, sender, msg_id)
+            if dup_status == "THREAD_REPLIED":
+                dup_info = {"type": "thread", "message": "Already replied to this thread."}
+                yield f"data: {json.dumps({'type': 'status', 'message': '⚠️ DUPLICATE DETECTED: A reply has already been sent to this thread.'})}\n\n"
+            elif dup_status == "EXACT_MATCH":
+                yield f"data: {json.dumps({'type': 'status', 'message': 'ℹ️ Already processed this specific email.'})}\n\n"
+
+            # 2. Semantic Check (Same intent/sender, different wording)
+            if not dup_info and controller.vectorstore:
+                body_raw = msg.get('body', {}).get('content', '')
+                body_clean = controller.processor.clean_html(body_raw)
+                
+                # Lightning ID Check (Regex) to avoid false positives for different orders
+                import re
+                inv_match = re.search(r'INV-\d+-\w+|INV-\d+', body_clean, re.I)
+                trk_match = re.search(r'TRK\d+', body_clean, re.I)
+                curr_ids = {inv_match.group(0).upper() if inv_match else None, trk_match.group(0).upper() if trk_match else None}
+                curr_ids.discard(None)
+
+                # Lowering threshold to 0.25 (75% similarity) to catch variations
+                semantic_dup = controller.vectorstore.find_semantic_duplicate(subject, body_clean, sender, threshold=0.25)
+                
+                if semantic_dup:
+                    # If we found a semantic match, check if it's about the SAME ID
+                    prev_inv = semantic_dup.get('invoice_id')
+                    prev_trk = semantic_dup.get('tracking_id')
+                    prev_ids = {prev_inv.upper() if prev_inv else None, prev_trk.upper() if prev_trk else None}
+                    prev_ids.discard(None)
+
+                    # Only flag as duplicate if they share at least one ID, or NEITHER has an ID
+                    is_real_duplicate = False
+                    if not curr_ids and not prev_ids: is_real_duplicate = True
+                    elif curr_ids.intersection(prev_ids): is_real_duplicate = True
+
+                    if is_real_duplicate:
+                        dup_info = {"type": "semantic", "similarity": semantic_dup['similarity']}
+                        sim_score = semantic_dup['similarity']
+                        status_msg = f"🔍 SEMANTIC DUPLICATE ({sim_score}%): Customer sent a similar inquiry recently."
+                        yield f"data: {json.dumps({'type': 'status', 'message': status_msg})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'status', 'message': 'ℹ️ Similar inquiry found, but refers to a different Order/Invoice ID.'})}\n\n"
+
             # Re-fetch attachments if needed
             attachments = msg.get('attachments', [])
             if msg.get('hasAttachments') and not attachments:
@@ -164,7 +215,12 @@ def process_email_stream():
             generator = controller.processor.process_single_email_stream(msg, attachments)
             
             for item in generator:
-                if item["type"] == "metadata":
+                print(f"PIPELINE DEBUG: Processing item type: {item.get('type')}")
+                if item["type"] == "status":
+                    print(f"PIPELINE: Status - {item['message']}")
+                    yield f"data: {json.dumps(item)}\n\n"
+                    
+                elif item["type"] == "metadata":
                     print("PIPELINE: Metadata yielded.")
                     yield f"data: {json.dumps(item)}\n\n"
                     
@@ -173,6 +229,7 @@ def process_email_stream():
                     yield f"data: {json.dumps(item)}\n\n"
                     
                 elif item["type"] == "final_record":
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Stage 2 Complete. Verifying identity & retrieving past context...'})}\n\n"
                     print("PIPELINE: Stage 2 Complete. Running DB & RAG logic...")
                     record = item["record"]
                     extraction = record.get("extraction", {})
@@ -210,13 +267,37 @@ def process_email_stream():
                     if controller.vectorstore:
                         query_text = f"{msg.get('subject')} {extraction.get('summary', '')}"
                         rag_context = controller.vectorstore.query(query_text)
+                        
+                        # PERSIST to Vector DB for future deduplication/RAG
+                        body_raw = msg.get('body', {}).get('content', '')
+                        body_clean = controller.processor.clean_html(body_raw)
+                        
+                        controller.vectorstore.store(
+                            message_id=msg.get('id'),
+                            raw_email=msg,
+                            extraction=extraction,
+                            db_context=db_context,
+                            clean_body=body_clean
+                        )
+
+                    # Log to MySQL for future deduplication
+                    controller.email_store.log_email(
+                        msg_id=msg.get('id'),
+                        conv_id=msg.get('conversationId'),
+                        sender=record['metadata']['sender'],
+                        subject=record['metadata']['subject'],
+                        received_at=record['metadata']['timestamp'],
+                        intent=extraction.get('intent'),
+                        status='PENDING'
+                    )
 
                     # Send final completed payload
                     final_payload = {
                         "type": "complete",
                         "record": record,
                         "db_context": db_context,
-                        "rag_context": rag_context
+                        "rag_context": rag_context,
+                        "duplicate_info": dup_info
                     }
                     yield f"data: {json.dumps(final_payload)}\n\n"
                     
@@ -278,11 +359,37 @@ def send_email():
         success = controller.fetcher.send_reply(access_token, message_id, formatted_content)
         if success:
             controller.fetcher.mark_as_read(access_token, message_id)
+            
+            # Update Database status to REPLIED
+            controller.email_store.update_status(message_id, 'REPLIED')
+            
             return jsonify({"success": True})
         else:
             return jsonify({"error": "Failed to send email"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/generate-reply-stream', methods=['POST'])
+def generate_reply_stream():
+    """Phase 2: Generate the reply with real-time streaming tokens."""
+    if not request.is_json:
+        return jsonify({"error": "Missing JSON"}), 400
+        
+    data = request.get_json()
+    extraction = data.get('extraction')
+    db_context = data.get('db_context')
+    rag_context = data.get('rag_context')
+    
+    def generate():
+        import config
+        model = getattr(config, 'STAGE3_MODEL', 'mistral')
+        stream = controller.processor.generate_reply_llama_stream(extraction, db_context, rag_context, model=model)
+        for chunk in stream:
+            yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+        yield "data: {\"type\": \"complete\"}\n\n"
+
+    from flask import Response, stream_with_context
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 if __name__ == '__main__':
     # Create required folders if they don't exist

@@ -119,6 +119,11 @@ class EmailController:
         self.fetcher = EmailFetcher(self.client_id, self.authority, self.scopes)
         self.processor = EmailProcessor()
         self.db = InvoiceDB()
+        
+        # New: Tracking processed emails to prevent duplicates
+        from database import EmailStore
+        self.email_store = EmailStore(self.db)
+        self.email_store.initialize_table()
 
         # Initialize VectorStore (ChromaDB)
         if ENABLE_RAG:

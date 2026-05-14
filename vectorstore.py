@@ -41,31 +41,30 @@ class VectorStore:
         print(f"[VectorDB] Initialized. Collection '{self.COLLECTION_NAME}' "
               f"has {self.collection.count()} document(s).")
 
-    def _build_document_text(self, raw_email: dict, extraction: dict) -> str:
+    def _build_document_text(self, subject: str, body: str) -> str:
         """
-        Builds a single text blob that combines the most important info
-        from both the raw email and the extracted entities.
-        This is what gets embedded and stored.
+        Standardizes the text format used for both storage and duplicate checking.
+        Ensures we are always comparing 'apples to apples'.
         """
-        subject = raw_email.get("subject", "")
-        body = raw_email.get("body", {}).get("content", "")[:2000]  # Cap at 2000 chars
-        entities_text = json.dumps(extraction, indent=2) if extraction else ""
+        return f"SUBJECT: {subject}\n\nBODY: {body[:2000]}"
 
-        return f"SUBJECT: {subject}\n\nEMAIL BODY:\n{body}\n\nEXTRACTED ENTITIES:\n{entities_text}"
-
-    def store(self, message_id: str, raw_email: dict, extraction: dict, db_context: dict = None):
+    def store(self, message_id: str, raw_email: dict, extraction: dict, db_context: dict = None, clean_body: str = None):
         """
         Store raw email + extracted entities into ChromaDB after Stage 2.
-        ChromaDB handles embedding automatically using its built-in function.
         """
         try:
-            doc_text = self._build_document_text(raw_email, extraction)
+            subject = raw_email.get("subject", "")
+            # Use provided clean_body if available, otherwise fallback
+            body = clean_body if clean_body else raw_email.get("body", {}).get("content", "")
+            doc_text = self._build_document_text(subject, body)
 
             # Store metadata alongside the embedding for inspection
             metadata = {
                 "subject":      raw_email.get("subject", ""),
                 "sender":       raw_email.get("from", {}).get("emailAddress", {}).get("address", ""),
                 "intent":       extraction.get("intent", "unknown") if extraction else "unknown",
+                "invoice_id":   extraction.get("entities", {}).get("invoice_id", ""),
+                "tracking_id":  extraction.get("entities", {}).get("tracking_id", ""),
                 "timestamp":    raw_email.get("receivedDateTime", ""),
                 "has_invoice":  str(bool(db_context and db_context.get("invoice"))),
                 "has_shipment": str(bool(db_context and db_context.get("shipment"))),
@@ -80,6 +79,33 @@ class VectorStore:
 
         except Exception as e:
             print(f"[VectorDB] WARNING: Failed to store email: {e}")
+
+    def find_semantic_duplicate(self, subject: str, body: str, sender_email: str, threshold: float = 0.15) -> dict:
+        """
+        Checks if a highly similar email from the same sender exists.
+        Returns the most similar metadata if distance < threshold.
+        Distance 0.0 = identical, 1.0 = completely different (Cosine).
+        """
+        try:
+            query_text = self._build_document_text(subject, body)
+            results = self.collection.query(
+                query_texts=[query_text],
+                n_results=1,
+                where={"sender": sender_email},
+                include=["metadatas", "distances"]
+            )
+            
+            if results["distances"] and results["distances"][0]:
+                dist = results["distances"][0][0]
+                if dist < threshold:
+                    return {
+                        "metadata": results["metadatas"][0][0],
+                        "similarity": round((1 - dist) * 100, 1)
+                    }
+            return None
+        except Exception as e:
+            print(f"[VectorDB] Duplicate check failed: {e}")
+            return None
 
     def query(self, query_text: str, top_k: int = RAG_TOP_K) -> list[str]:
         """

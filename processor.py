@@ -272,7 +272,8 @@ class EmailProcessor:
         ### RULES:
         1. RELATIONAL DATA: Group related items as LISTS OF OBJECTS in "dynamic_entities".
         2. ALWAYS capture standalone numbers, dates, and alphanumeric IDs in "structured_patterns".
-        3. Hint: {hint}
+        3. THOUGHT PROCESS: In the "thought_process" field, write exactly 2 sentences of reasoning about how you arrived at your conclusions. NEVER repeat the instructions or return the string 'Do NOT copy this instruction'.
+        4. Hint: {hint}
         
         ### CONTENT TO ANALYZE (Body + Attachments):
         <email_content>
@@ -281,14 +282,14 @@ class EmailProcessor:
         
         ### SCHEMA (Strict - Fill every field):
         {{
-          "thought_process": "Write a 2-sentence chain-of-thought explaining exactly how you identified the entities and intent. Do NOT copy this instruction.",
+          "thought_process": "[Your analytical reasoning here - 2 sentences max]",
           "intent": "thank_you OR shipping_inquiry OR billing_inquiry OR complaint", 
           "category": "invoice OR shipment OR general", 
-          "summary": "Short description of email content",
-          "customer_name": "Tony Stark (Example)",
+          "summary": "[Brief content summary]",
+          "customer_name": "[Sender Full Name]",
           "entities": {{
-            "invoice_number": "INV123 (Example)",
-            "tracking_number": "TRK123 (Example)"
+            "invoice_number": "[Alphanumeric ID]",
+            "tracking_number": "[Tracking/Shipment ID]"
           }},
           "confidence_score": 1.0
         }}
@@ -301,7 +302,8 @@ class EmailProcessor:
             response = ollama.chat(
                 model=self.stage2_model,
                 messages=[{'role': 'user', 'content': prompt}],
-                stream=True
+                stream=True,
+                format='json'
             )
             
             full_json_str = ""
@@ -329,10 +331,12 @@ class EmailProcessor:
         received_at = msg.get('receivedDateTime', '')
         
         body_content = msg.get('body', {}).get('content', '')
+        yield {"type": "status", "message": "Cleaning HTML body structure..."}
         clean_text = self.clean_html(body_content)
         
         attachment_text = ""
         if attachments:
+            yield {"type": "status", "message": f"Parsing {len(attachments)} attachment(s)..."}
             from doc_processor import DocumentProcessor
             formatted_docs = []
             for a in attachments:
@@ -350,6 +354,7 @@ class EmailProcessor:
         from config import ENABLE_STAGE1, OPTIMIZE_STAGE1
         use_stage1 = False
         if ENABLE_STAGE1:
+            yield {"type": "status", "message": "Running Stage 1 (Mistral/Intent)..."}
             if OPTIMIZE_STAGE1:
                 use_stage1 = self._is_complex(clean_text, bool(attachment_text))
             else:
@@ -366,6 +371,7 @@ class EmailProcessor:
             "timestamp": received_at, "subject": subject
         }
         
+        yield {"type": "status", "message": "Initializing Stage 2 (Llama/Extraction)..."}
         # Yield metadata before streaming
         yield {"type": "metadata", "metadata": metadata, "analysis": analysis_result}
         
@@ -482,3 +488,54 @@ class EmailProcessor:
             for result in results:
                 processed_data.append(result)
         return processed_data
+
+    def generate_reply_llama_stream(self, extraction, db_context, rag_context, model=None):
+        """Phase 2: Generate the reply with real-time streaming tokens."""
+        target_model = model or self.stage2_model 
+        
+        intent = extraction.get('intent', 'General Inquiry')
+        summary = extraction.get('summary', 'No summary.')
+        
+        resolved_name = "Valued Customer"
+        loyalty_level = "Standard"
+        if db_context and db_context.get('customer'):
+            resolved_name = db_context['customer'].get('name', resolved_name)
+            loyalty_level = db_context['customer'].get('loyalty_level', loyalty_level)
+
+        db_knowledge = json.dumps(db_context, indent=2)
+        loyalty_instruction = "Tone: Highly personalized for Platinum user." if "Platinum" in loyalty_level else "Tone: Professional and helpful."
+
+        prompt = f"""
+        Generate a professional email reply. Output JSON ONLY.
+        
+        ### DATABASE RECORDS (FACTS ONLY):
+        {db_knowledge}
+
+        ### EMAIL CONTEXT:
+        - Intent: {intent}
+        - Summary: {summary}
+        
+        ### INSTRUCTIONS:
+        1. FACTUAL ACCURACY: Use ONLY the "DATABASE RECORDS" for facts.
+        2. LOYALTY RULE: {loyalty_instruction}
+        3. SIGNATURE: End with: "Best Regards, \nEmailAI Support Team".
+        
+        ### OUTPUT FORMAT (STRICT JSON):
+        {{
+          "draft": "The full email body text.",
+          "thought_process": "Explain reasoning briefly."
+        }}
+        """
+        
+        try:
+            response = ollama.chat(
+                model=target_model,
+                messages=[{'role': 'user', 'content': prompt}],
+                stream=True,
+                format='json'
+            )
+            for chunk in response:
+                yield chunk['message']['content']
+                
+        except Exception as e:
+            yield json.dumps({"error": str(e)})

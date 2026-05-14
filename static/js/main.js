@@ -219,8 +219,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const decoder = new TextDecoder("utf-8");
 
             const watchdog = setInterval(() => {
-                if (Date.now() - lastDataTime > 15000) {
-                    console.warn("Watchdog timeout");
+                if (Date.now() - lastDataTime > 30000) {
+                    console.warn("Watchdog timeout (30s)");
                     reader.cancel();
                     clearInterval(watchdog);
                 }
@@ -246,9 +246,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.substring(6));
-                                if (data.type === 'chunk') {
+                                if (data.type === 'status') {
+                                    if (aiStep) {
+                                        aiStep.logs.push(data.message);
+                                        const termEl = document.getElementById(`term-${aiStep.id}`);
+                                        if (termEl) {
+                                            termEl.innerHTML = aiStep.logs.map(l => `<div>> ${l}</div>`).join('');
+                                            termEl.scrollTop = termEl.scrollHeight;
+                                        }
+                                    }
+                                } else if (data.type === 'chunk') {
                                     fullJsonStr += data.content;
-                                    const match = fullJsonStr.match(/"thought_process"\s*:\s*"([^"]*)/);
+                                    const match = fullJsonStr.match(/"thought_process"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
                                     if (match && match[1]) {
                                         currentThought = match[1];
                                         if (aiStep) {
@@ -281,7 +290,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearInterval(watchdog);
             } 
             
-            if (!finalResult) throw new Error("AI stream interrupted.");
+            if (!finalResult) {
+                console.error("Stream interrupted. Buffer content:", streamBuffer);
+                throw new Error("AI stream interrupted. (Incomplete Payload)");
+            }
             await new Promise(r => setTimeout(r, 800));
 
             // Finalize previous card
@@ -296,7 +308,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const duration = ((performance.now() - startTime) / 1000).toFixed(1);
 
             updatePipeline(email.id, 'Context Mapped', 'Identity Verified.', [
-                `Thought for ${duration}s -> "${finalResult.record.extraction.thought_process || currentThought}"`,
                 `User: ${finalResult.db_context.customer.name} (${finalResult.db_context.customer.loyalty_level})`,
                 `Context: ${finalResult.rag_context.length} past emails retrieved.`
             ]);
@@ -319,10 +330,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderAIDetail(data, rawEmail) {
-        const { record, db_context, rag_context, draft } = data;
+        const { record, db_context, rag_context, draft, duplicate_info } = data;
         const extraction = record?.extraction || {};
         const entities = extraction.entities || {};
         document.body.classList.add('show-detail');
+
+        let dupBadge = '';
+        if (duplicate_info) {
+            const label = duplicate_info.type === 'semantic' 
+                ? `SIMILAR INQUIRY (${duplicate_info.similarity}%)` 
+                : `THREAD ALREADY REPLIED`;
+            dupBadge = `<div class="status-badge" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-left: 10px;">
+                            <i data-lucide="alert-triangle" style="width:12px; height:12px; display:inline; vertical-align:middle; margin-right:4px;"></i> ${label}
+                        </div>`;
+        }
 
         detailView.innerHTML = `
             <div class="detail-view-content animate-in">
@@ -331,9 +352,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 </button>
                 <div class="header-section">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <div>
-                            <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">${rawEmail.subject}</h1>
-                            <p style="color: var(--text-dim)">From: ${rawEmail.from.emailAddress.address}</p>
+                        <div style="display:flex; align-items:flex-start;">
+                            <div>
+                                <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">${rawEmail.subject}</h1>
+                                <p style="color: var(--text-dim)">From: ${rawEmail.from.emailAddress.address}</p>
+                            </div>
+                            ${dupBadge}
                         </div>
                         <div class="status-badge" style="background: var(--primary-glow); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
                             <i data-lucide="check" style="width:12px; height:12px; display:inline; vertical-align:middle;"></i> AI CONTEXT READY
@@ -384,11 +408,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="draft-box" id="draft-editor" contenteditable="true" style="border-left: 4px solid var(--accent); padding-left: 24px; word-break: break-word; font-size:15px; line-height:1.6;">${typeof draft === 'string' ? draft.replace(/\n/g, '<br>') : 'Draft generation error.'}</div>
                     ` : `
-                        <div class="ai-trigger-section" style="border: 1px solid var(--border); padding: 32px; text-align:center;">
-                            <p style="color: var(--text-dim); margin-bottom: 16px;">Final context ready. Generate a tailored response draft?</p>
-                            <button class="btn btn-primary" id="btn-generate-draft" style="width: 100%; padding: 16px;">
-                                <i data-lucide="pen-tool"></i> Generate AI Reply Draft
-                            </button>
+                        <div class="ai-trigger-section" style="border: 1px solid var(--border); padding: 32px; text-align:center; background: ${duplicate_info ? 'rgba(239, 68, 68, 0.05)' : 'transparent'}; border-color: ${duplicate_info ? 'rgba(239, 68, 68, 0.2)' : 'var(--border)'}">
+                            ${duplicate_info ? `
+                                <div style="color: #ef4444; margin-bottom: 16px; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600;">
+                                    <i data-lucide="alert-circle"></i> This inquiry looks like a duplicate or has already been replied to.
+                                </div>
+                                <p style="color: var(--text-dim); margin-bottom: 24px; font-size:13px;">Are you sure you want to generate another response?</p>
+                                <button class="btn btn-secondary" id="btn-generate-draft" style="width: 100%; padding: 16px; border: 1px solid #ef4444; color: #ef4444;">
+                                    <i data-lucide="pen-tool"></i> Ignore Warning & Generate Draft
+                                </button>
+                            ` : `
+                                <p style="color: var(--text-dim); margin-bottom: 16px;">Final context ready. Generate a tailored response draft?</p>
+                                <button class="btn btn-primary" id="btn-generate-draft" style="width: 100%; padding: 16px;">
+                                    <i data-lucide="pen-tool"></i> Generate AI Reply Draft
+                                </button>
+                            `}
                         </div>
                     `}
                 </div>
@@ -411,66 +445,36 @@ document.addEventListener('DOMContentLoaded', () => {
         // Draft Generation Listener
         const btnGen = document.getElementById('btn-generate-draft');
         if (btnGen) {
-            btnGen.onclick = async () => {
-                if (isProcessing) return; // Prevent overlapping tasks
-                isProcessing = true;
-                updateSaveButtonState();
-
-                const originalText = btnGen.innerHTML;
-                btnGen.innerHTML = '<div class="spinner-small"></div> Generating Draft...';
-                btnGen.disabled = true;
-                btnGen.style.opacity = '0.5';
-                
-                // Add Draft Generation to the visual pipeline
-                updatePipeline(rawEmail.id, 'Draft Generation', 'Writing response...', [
-                    'Consulting Stage 3 Intelligence...',
-                    'Applying contextual constraints...',
-                    'Mapping entities to response template...'
-                ]);
-
-                try {
-                    const result = await apiCall('/api/generate-reply', 'POST', {
-                        extraction: extraction,
-                        db_context: db_context,
-                        rag_context: rag_context
-                    });
-                    if (result.error) throw new Error(result.error);
-                    
-                    processedCache[rawEmail.id].draft = result.draft || result;
-
-                    // Finalize the pipeline card
-                    updatePipeline(rawEmail.id, 'Draft Generation', 'Ready for Review', [
-                        'Draft successfully generated.',
-                        'Tone & Context heuristics applied.'
-                    ]);
-
-                    renderAIDetail(processedCache[rawEmail.id], rawEmail);
-                } catch (e) {
-                    alert("Draft Generation Error: " + e.message);
-                } finally {
-                    isProcessing = false;
-                    updateSaveButtonState();
-                    btnGen.innerHTML = originalText;
-                    btnGen.disabled = false;
-                    btnGen.style.opacity = '1';
-                }
-            };
+            btnGen.onclick = () => streamDraftGeneration(extraction, db_context, rag_context, rawEmail, btnGen);
         }
 
-        // Draft Actions (Send, Regenerate, Back)
+        // Draft Actions (Send, Regenerate)
         const btnSend = document.getElementById('btn-send');
         if (btnSend) {
             btnSend.onclick = async () => {
                 const editor = document.getElementById('draft-editor');
-                const finalContent = editor ? editor.innerText : (typeof draft === 'string' ? draft : '');
+                const content = editor ? editor.innerText : '';
                 
                 btnSend.innerHTML = '<div class="spinner-small"></div> Sending...';
                 btnSend.disabled = true;
+                
                 try {
-                    // Integration Point: Outlook Send API would be called here
-                    alert("Success: Email response approved and marked for delivery.");
+                    const result = await apiCall('/api/send-email', 'POST', {
+                        message_id: rawEmail.id,
+                        content: content
+                    });
+                    
+                    if (result.success) {
+                        alert("🚀 Success: Email sent and marked as REPLIED in database.");
+                        // Update local cache and UI
+                        processedCache[rawEmail.id].status = 'REPLIED';
+                        renderEmailList(currentEmails);
+                        document.body.classList.remove('show-detail'); // Close the detail view
+                    } else {
+                        throw new Error(result.error || "Unknown error");
+                    }
                 } catch (e) {
-                    alert("Send Error: " + e.message);
+                    alert("❌ Send Error: " + e.message);
                 } finally {
                     btnSend.innerHTML = '<i data-lucide="send"></i> Approve & Send';
                     btnSend.disabled = false;
@@ -480,38 +484,104 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const btnRegen = document.getElementById('btn-regenerate');
         if (btnRegen) {
-            btnRegen.onclick = async () => {
-                if (isProcessing) return;
-                isProcessing = true;
-                updateSaveButtonState();
+            btnRegen.onclick = () => streamDraftGeneration(extraction, db_context, rag_context, rawEmail, null, true);
+        }
+    }
 
-                const editor = document.getElementById('draft-editor');
-                const originalHTML = editor ? editor.innerHTML : '';
-                if (editor) editor.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100px; color:var(--accent);"><div class="spinner-small"></div> Regenerating new draft...</div>';
-                
-                updatePipeline(rawEmail.id, 'Draft Generation', 'Regenerating...', ['Refreshing Stage 3 Intelligence...', 'Exploring alternative phrasing...']);
+    async function streamDraftGeneration(extraction, db_context, rag_context, rawEmail, btnTrigger, isRegen = false) {
+        if (isProcessing) return;
+        isProcessing = true;
+        updateSaveButtonState();
 
-                try {
-                    const result = await apiCall('/api/generate-reply', 'POST', {
-                        extraction: extraction,
-                        db_context: db_context,
-                        rag_context: rag_context
-                    });
-                    if (result.error) throw new Error(result.error);
-                    
-                    processedCache[rawEmail.id].draft = result.draft || result;
-                    updatePipeline(rawEmail.id, 'Draft Generation', 'New Draft Ready', ['Draft refreshed successfully.']);
-                    renderAIDetail(processedCache[rawEmail.id], rawEmail);
-                } catch (e) {
-                    alert("Regeneration Error: " + e.message);
-                    if (editor) editor.innerHTML = originalHTML;
-                } finally {
-                    isProcessing = false;
-                    updateSaveButtonState();
-                }
-            };
+        let editor = document.getElementById('draft-editor');
+        if (btnTrigger) {
+            btnTrigger.innerHTML = '<div class="spinner-small"></div> Generating...';
+            btnTrigger.disabled = true;
         }
 
+        if (isRegen && editor) {
+            editor.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100px; color:var(--accent);"><div class="spinner-small"></div> Regenerating...</div>';
+        } else if (!editor) {
+            // Instant Activation: Show the box immediately
+            processedCache[rawEmail.id].draft = '<div style="display:flex; align-items:center; gap:8px; color:var(--text-dim); font-style:italic;"><div class="spinner-small"></div> AI is drafting response...</div>';
+            renderAIDetail(processedCache[rawEmail.id], rawEmail);
+            editor = document.getElementById('draft-editor');
+        }
+
+        updatePipeline(rawEmail.id, 'Draft Generation', isRegen ? 'Regenerating...' : 'Writing...', [
+            'Consulting Stage 3 Intelligence...',
+            'Streaming tokens from Ollama...'
+        ]);
+
+        let fullJsonStr = "";
+        let streamBuffer = "";
+        let currentDraft = "";
+        let currentThought = "";
+        let lastDataTime = Date.now();
+
+        try {
+            const response = await fetch('/api/generate-reply-stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ extraction, db_context, rag_context })
+            });
+
+            if (!response.ok) throw new Error("Stream failed");
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            const watchdog = setInterval(() => {
+                if (Date.now() - lastDataTime > 30000) { reader.cancel(); clearInterval(watchdog); }
+            }, 5000);
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                lastDataTime = Date.now();
+                streamBuffer += decoder.decode(value, { stream: true });
+                let lines = streamBuffer.split(/\n+/);
+                streamBuffer = lines.pop();
+
+                for (let line of lines) {
+                    if (line.trim().startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.trim().substring(6));
+                            if (data.type === 'chunk') {
+                                fullJsonStr += data.content;
+                                
+                                // Extract thought process
+                                const tMatch = fullJsonStr.match(/"thought_process"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
+                                if (tMatch) currentThought = tMatch[1];
+
+                                // Extract draft
+                                const dMatch = fullJsonStr.match(/"draft"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
+                                if (dMatch) {
+                                    currentDraft = dMatch[1].replace(/\\n/g, '<br>').replace(/\\"/g, '"');
+                                    if (editor) {
+                                        editor.innerHTML = currentDraft + '<span class="cursor-blink">█</span>';
+                                        editor.scrollTop = editor.scrollHeight;
+                                    }
+                                }
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+            clearInterval(watchdog);
+
+            processedCache[rawEmail.id].draft = currentDraft;
+            updatePipeline(rawEmail.id, 'Draft Generation', 'Ready', [
+                `Logic: ${currentThought}`,
+                'Draft successfully finalized.'
+            ]);
+            renderAIDetail(processedCache[rawEmail.id], rawEmail);
+
+        } catch (e) {
+            alert("Streaming Error: " + e.message);
+        } finally {
+            isProcessing = false;
+            updateSaveButtonState();
+        }
     }
 
     function showDataModal(title, content, isJson = true) {
