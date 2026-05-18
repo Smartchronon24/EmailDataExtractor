@@ -1,31 +1,55 @@
-# EmailDataExtractor 📧🤖 (Branch: RAG&UIUXv1)
+# EmailDataExtractor 📧🤖 (Branch: pipeline-stabilization)
 
-An advanced, production-grade AI Email Orchestration Platform. This version transforms the project from a terminal-based script into a **RAG-enhanced Flask Dashboard** with a professional "Human-in-the-Loop" workflow.
+An advanced, production-grade AI Email Orchestration Platform. This platform features a fully-realized multi-stage agentic pipeline, a **RAG-enhanced Flask Dashboard**, a highly robust database deduplication state machine, and a human-in-the-loop draft editor.
 
-## 📊 Project Workflow v2.0
+---
 
-![Project Workflow](WorkFlowV2.png)
+## 📊 Project Workflow & Stages
 
-## 🌟 Key Features
+Our architecture partitions email analysis into discrete agentic phases to ensure logical execution, eliminate model hallucinations, and guarantee data safety:
 
-### 1. RAG-Enhanced Intelligence (ChromaDB) 🧠
-- **Semantic Memory**: Uses ChromaDB to store and retrieve past email communications.
-- **Contextual Grounding**: Automatically injects relevant historical context into the AI's reply generator to ensure consistency with previous brand messaging.
-- **Data Firewall**: A strict prompt engineering layer that prevents "context bleeding"—ensuring the AI never uses names or IDs from old emails in new replies.
+```
+[Outlook Fetch] ──> [Stage 0: Deduplication] ──> [Stage 1: Strategy] ──> [Stage 2: Extraction] ──> [Stage 3: Drafting] ──> [Human Review & Send]
+```
 
-### 2. Premium Flask Dashboard 🖥️
-- **Dual-Panel UI**: A sleek, glassmorphism-themed interface for browsing fetched emails and performing deep analysis.
-- **Live Preview**: Read raw emails with preserved formatting (newlines/paragraphs) before triggering the AI.
-- **Interactive Editing**: Directly edit AI-generated drafts in a content-editable editor before sending.
+### 1. Stage 0: Deduplication (Deterministic State Machine)
+Before launching heavy LLMs, the platform runs a **prioritized state machine** comparing the message ID, conversation thread, and ChromaDB vector semantics.
+*   **Safety Overrides:** Instantly overrides decisions to `DUPLICATE` if highly similar semantic records exist, stopping logic flips on small models.
+*   **State Alignment:** Resolves the status of semantically similar emails across different conversation threads to identify whether an inquiry has already been replied to, showing a red warning outline.
 
-### 3. Human-in-the-Loop Workflow 🤝
-- **Phase 1: Fact Extraction**: Trigger AI to extract Intent, Category, Summary, and look up matching records in MySQL.
-- **Phase 2: Review**: Verify the AI's understanding and database matches (Invoices/Shipments).
-- **Phase 3: Generate & Approve**: Trigger Llama 3 to draft the final reply once the context is verified.
+### 2. Stage 1: Strategy Mapping
+The agent reads the email content, evaluates the RAG contexts, and maps a support strategy (e.g. tracking dispute, payment issue, cancel order).
 
-### 4. Hybrid Fact-Checking Engine 🛡️
-- **Deterministic Regex Safety Net**: Scans for customizable ID patterns (INV, TRK, etc.) to catch what the LLM might miss.
-- **MySQL Source-of-Truth**: Validates every extracted invoice and shipment ID against your live production database.
+### 3. Stage 2: Entity Extraction & Dynamic Tools
+The agent acts autonomously to retrieve missing information from database systems.
+*   **Dynamic Tool Filtering:** Automatically strips document text extraction tools if the target email has no attachments, preventing hallucinated base64 execution errors.
+*   **Self-Healing Parameters:** Wrap functions with parameter-aliasing robust kwargs (e.g. mapping `id` or `invoice_number` to `invoice_id`), eliminating Python positional crashes.
+
+### 4. Stage 3: Live Draft Generation
+Generates replies based strictly on pre-fetched business data from relational databases, preventing redundant tool loops and hallucinated invoice numbers.
+
+---
+
+## 🌟 Key Features & Toolsets
+
+### 🧠 RAG-Enhanced Semantic Memory (ChromaDB)
+*   Queries ChromaDB to locate semantically similar historic threads from the same customer.
+*   Uses a strict data firewall to prevent "context bleeding" across different accounts.
+
+### 🗃️ Business Relational Source-of-Truth (MySQL)
+Validates every extracted invoice ID, tracking number, and customer profile against live tables.
+*   **`get_customer_invoices(email)` [NEW]:** Fetches a customer's entire historical invoice portfolio to resolve general inquiries when no specific ID is mentioned.
+*   **`check_thread_history(conversation_id)` [NEW]:** Pulls the chronological intent and lifecycle log of the active conversation thread.
+
+### 🖥️ Premium Glassmorphism Dashboard
+*   **Interactive Editing:** Direct in-place editing of AI-generated responses before sending.
+*   **Conditional Badges:** Dynamic, clean status styling showing `PROCESSED (PENDING REPLY)` or `THREAD ALREADY REPLIED` based on database history.
+
+### 🛡️ Client Resilience
+*   Increased streaming timeouts and browser connection watchdogs to **90 seconds** to wait for sequential multi-turn model execution on slower local hardware.
+*   Protected replied status updates using safe MySQL updates: `status = IF(status = 'REPLIED', 'REPLIED', VALUES(status))`.
+
+---
 
 ## 🏗️ System Architecture
 
@@ -44,7 +68,7 @@ graph TD
 
     subgraph "AI & Vector Layer"
         Chroma[ChromaDB: Vector RAG]
-        Ollama[Ollama: Mistral & Llama 3]
+        Ollama[Ollama: Llama 3.1 & 3.2]
     end
 
     subgraph "Relational Data"
@@ -62,6 +86,8 @@ graph TD
     App -- Store --> Cache
 ```
 
+---
+
 ## ⚙️ Setup & Configuration
 
 ### Dependencies
@@ -69,21 +95,13 @@ graph TD
 pip install flask msal ollama mysql-connector-python chromadb beautifulsoup4
 ```
 
-### Configuration (`config.py`)
-| Variable | Description |
-|----------|-------------|
-| `ENABLE_STAGE1` | Toggle Mistral Stage 1 analysis. |
-| `STAGE2_MODEL` | Set your main extraction model (e.g., `llama3`). |
-| `INVOICE_PREFIXES` | Add custom invoice prefixes (e.g., `["BILL", "INV"]`). |
-| `CHROMA_PATH` | Directory for the Vector database. |
-
-## 🚀 Running the Platform
-1. Ensure your MySQL server and Ollama are running.
-2. Start the web server:
+### Running the Platform
+1. Ensure MySQL and your local Ollama instance are running.
+2. Launch the Flask server:
    ```bash
    python app.py
    ```
-3. Visit `http://localhost:5000` in your browser.
+3. Open `http://localhost:5000` in your web browser.
 
 ---
 *Created by [Smartchronon24](https://github.com/Smartchronon24)*
