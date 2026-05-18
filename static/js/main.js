@@ -98,7 +98,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const options = { method, headers: { 'Content-Type': 'application/json' } };
         if (body) options.body = JSON.stringify(body);
         const res = await fetch(url, options);
-        return await res.json();
+        
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+            return await res.json();
+        } else {
+            const text = await res.text();
+            console.error("Server returned non-JSON response:", text);
+            throw new Error(`Server Error (${res.status}): Please check terminal logs.`);
+        }
     }
 
     function renderEmailList(emails) {
@@ -203,12 +211,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s connection timeout
+            const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s connection timeout
 
             const response = await fetch('/api/process-email-stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email }),
+                body: JSON.stringify({ email: email }),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -219,8 +227,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const decoder = new TextDecoder("utf-8");
 
             const watchdog = setInterval(() => {
-                if (Date.now() - lastDataTime > 30000) {
-                    console.warn("Watchdog timeout (30s)");
+                if (Date.now() - lastDataTime > 90000) {
+                    console.warn("Watchdog timeout (90s)");
                     reader.cancel();
                     clearInterval(watchdog);
                 }
@@ -244,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     for (let line of lines) {
                         line = line.trim();
                         if (line.startsWith('data: ')) {
+                            console.log("STREAM DATA:", line);
                             try {
                                 const data = JSON.parse(line.substring(6));
                                 if (data.type === 'status') {
@@ -307,9 +316,13 @@ document.addEventListener('DOMContentLoaded', () => {
             processedCache[email.id] = finalResult;
             const duration = ((performance.now() - startTime) / 1000).toFixed(1);
 
+            const customerName = finalResult.db_context.customer ? finalResult.db_context.customer.name : "Guest/New Customer";
+            const customerLoyalty = finalResult.db_context.customer ? finalResult.db_context.customer.loyalty_level : "N/A";
+            const ragCount = finalResult.rag_context ? finalResult.rag_context.length : 0;
+
             updatePipeline(email.id, 'Context Mapped', 'Identity Verified.', [
-                `User: ${finalResult.db_context.customer.name} (${finalResult.db_context.customer.loyalty_level})`,
-                `Context: ${finalResult.rag_context.length} past emails retrieved.`
+                `User: ${customerName} (${customerLoyalty})`,
+                `Context: ${ragCount} past emails retrieved.`
             ]);
 
             renderAIDetail(finalResult, email);
@@ -337,12 +350,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let dupBadge = '';
         if (duplicate_info) {
-            const label = duplicate_info.type === 'semantic' 
-                ? `SIMILAR INQUIRY (${duplicate_info.similarity}%)` 
-                : `THREAD ALREADY REPLIED`;
-            dupBadge = `<div class="status-badge" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-left: 10px;">
+            let label = "DUPLICATE INQUIRY";
+            let color = "#ef4444";
+            
+            if (duplicate_info.type === 'semantic') {
+                label = `SIMILAR INQUIRY (${duplicate_info.similarity}%)`;
+            } else {
+                const reason = duplicate_info.reasoning || "";
+                if (reason.includes("PENDING")) {
+                    label = "PROCESSED (PENDING REPLY)";
+                    color = "#fbbf24"; // Warning yellow instead of error red
+                } else if (reason.includes("REPLIED") || reason.includes("THREAD_REPLIED")) {
+                    label = "THREAD ALREADY REPLIED";
+                }
+            }
+
+            dupBadge = `<div class="status-badge" style="background: ${color}1a; color: ${color}; border: 1px solid ${color}33; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-left: 10px;">
                             <i data-lucide="alert-triangle" style="width:12px; height:12px; display:inline; vertical-align:middle; margin-right:4px;"></i> ${label}
                         </div>`;
+        }
+
+        let isRepliedOrDuplicate = false;
+        if (duplicate_info) {
+            if (duplicate_info.type === 'semantic') {
+                isRepliedOrDuplicate = true;
+            } else {
+                const reason = duplicate_info.reasoning || "";
+                if (reason.includes("REPLIED") || reason.includes("THREAD_REPLIED")) {
+                    isRepliedOrDuplicate = true;
+                }
+            }
         }
 
         detailView.innerHTML = `
@@ -408,8 +445,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="draft-box" id="draft-editor" contenteditable="true" style="border-left: 4px solid var(--accent); padding-left: 24px; word-break: break-word; font-size:15px; line-height:1.6;">${typeof draft === 'string' ? draft.replace(/\n/g, '<br>') : 'Draft generation error.'}</div>
                     ` : `
-                        <div class="ai-trigger-section" style="border: 1px solid var(--border); padding: 32px; text-align:center; background: ${duplicate_info ? 'rgba(239, 68, 68, 0.05)' : 'transparent'}; border-color: ${duplicate_info ? 'rgba(239, 68, 68, 0.2)' : 'var(--border)'}">
-                            ${duplicate_info ? `
+                        <div class="ai-trigger-section" style="border: 1px solid var(--border); padding: 32px; text-align:center; background: ${isRepliedOrDuplicate ? 'rgba(239, 68, 68, 0.05)' : 'transparent'}; border-color: ${isRepliedOrDuplicate ? 'rgba(239, 68, 68, 0.2)' : 'var(--border)'}">
+                            ${isRepliedOrDuplicate ? `
                                 <div style="color: #ef4444; margin-bottom: 16px; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600;">
                                     <i data-lucide="alert-circle"></i> This inquiry looks like a duplicate or has already been replied to.
                                 </div>
@@ -531,7 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const decoder = new TextDecoder();
 
             const watchdog = setInterval(() => {
-                if (Date.now() - lastDataTime > 30000) { reader.cancel(); clearInterval(watchdog); }
+                if (Date.now() - lastDataTime > 90000) { reader.cancel(); clearInterval(watchdog); }
             }, 5000);
 
             while (true) {
@@ -641,9 +678,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
             const check = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
-            set('set-stage1-model', s.STAGE1_MODEL || 'mistral');
-            set('set-stage2-model', s.STAGE2_MODEL || 'llama3');
-            set('set-stage3-model', s.STAGE3_MODEL || 'mistral');
+            set('set-stage1-model', s.STAGE1_MODEL || 'llama3.1');
+            set('set-stage2-model', s.STAGE2_MODEL || 'llama3.1');
+            set('set-stage3-model', s.STAGE3_MODEL || 'llama3.1');
             set('set-theme', s.THEME || 'dark');
             check('set-enable-stage1', s.ENABLE_STAGE1);
             check('set-optimize-stage1', s.OPTIMIZE_STAGE1);
@@ -652,6 +689,8 @@ document.addEventListener('DOMContentLoaded', () => {
             set('set-trk-prefixes', (s.TRACKING_PREFIXES || []).join(', '));
             set('set-max-workers', s.MAX_WORKERS || 1);
             set('set-max-retries', s.MAX_RETRIES || 2);
+            set('set-emails-to-fetch', s.EMAILS_TO_FETCH || 5);
+            check('set-only-unread', s.ONLY_UNREAD);
             
             if (s.THEME === 'light') document.body.classList.add('light-mode');
             else document.body.classList.remove('light-mode');
@@ -674,7 +713,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 INVOICE_PREFIXES: get('set-inv-prefixes')?.split(',').map(x => x.trim()).filter(x => x) || [],
                 TRACKING_PREFIXES: get('set-trk-prefixes')?.split(',').map(x => x.trim()).filter(x => x) || [],
                 MAX_WORKERS: parseInt(get('set-max-workers')) || 1,
-                MAX_RETRIES: parseInt(get('set-max-retries')) || 2
+                MAX_RETRIES: parseInt(get('set-max-retries')) || 2,
+                EMAILS_TO_FETCH: parseInt(get('set-emails-to-fetch')) || 5,
+                ONLY_UNREAD: isChecked('set-only-unread')
             };
             btnSaveSettings.innerText = 'Saving...';
             try {

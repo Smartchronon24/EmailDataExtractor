@@ -47,7 +47,7 @@ class EmailFetcher:
         print("API STATUS:", response.status_code)
         
         if response.status_code == 200:
-            return response.json()
+            return response.json().get('value', [])
         else:
             print(f"Error fetching emails: {response.text}")
             return None
@@ -154,7 +154,8 @@ class EmailController:
         # Re-initialize Processor with new models
         self.processor = EmailProcessor(
             stage1_model=config.STAGE1_MODEL,
-            stage2_model=config.STAGE2_MODEL
+            stage2_model=config.STAGE2_MODEL,
+            stage3_model=config.STAGE3_MODEL
         )
         
         # Re-initialize VectorStore if needed
@@ -285,7 +286,8 @@ class EmailController:
 
             # Stage 4 & 5: Reply Generation & Review (Respecting Killswitch)
             if self.enable_reply:
-                draft_reply = self.processor.generate_reply_llama(record.get("extraction", {}), db_context=db_context, rag_context=rag_context)
+                import asyncio
+                draft_reply = asyncio.run(self.processor.generate_reply_llama(record.get("extraction", {}), db_context=db_context, rag_context=rag_context))
                 current_draft = draft_reply
                 
                 while True:

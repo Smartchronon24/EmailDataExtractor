@@ -116,26 +116,25 @@
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 1 Model (Mistral/Intent)</label>
                                 <select id="set-stage1-model" class="input-field" style="width: 100%;">
+                                    <option value="llama3.1">Llama 3.1 (Recommended / Tool-Aware)</option>
                                     <option value="mistral">Mistral (Optimized)</option>
-                                    <option value="llama3">Llama 3 (Detailed)</option>
-                                    <option value="gemma" disabled>Gemma (Not installed)</option>
-                                    <option value="phi3" disabled>Phi-3 (Not installed)</option>
+                                    <option value="llama3">Llama 3 (Legacy)</option>
                                 </select>
                             </div>
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 2 Model (Llama/Extraction)</label>
                                 <select id="set-stage2-model" class="input-field" style="width: 100%;">
-                                    <option value="llama3">Llama 3 (High Precision)</option>
+                                    <option value="llama3.1">Llama 3.1 (High Precision / Agentic)</option>
+                                    <option value="llama3">Llama 3 (Standard)</option>
                                     <option value="mistral">Mistral (Fast)</option>
-                                    <option value="gemma" disabled>Gemma (Not installed)</option>
                                 </select>
                             </div>
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-size: 14px;">Stage 3 Model (Reply Generation)</label>
                                 <select id="set-stage3-model" class="input-field" style="width: 100%;">
-                                    <option value="mistral">Mistral (Recommended)</option>
-                                    <option value="llama3">Llama 3 (Creative)</option>
-                                    <option value="gemma" disabled>Gemma (Not installed)</option>
+                                    <option value="llama3.1">Llama 3.1 (Agentic Tool Calling)</option>
+                                    <option value="mistral">Mistral (Legacy)</option>
+                                    <option value="llama3">Llama 3 (Standard)</option>
                                 </select>
                             </div>
                             
@@ -178,6 +177,20 @@
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-size: 14px;">Tracking Prefixes (Comma separated)</label>
                                 <input type="text" id="set-trk-prefixes" class="input-field" style="width: 100%;" placeholder="TRK, SHIP">
+                            </div>
+
+                            <h3 style="margin-bottom: 16px; color: #60a5fa; margin-top: 32px;">Email Fetch Controls</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 8px; font-size: 14px;">Emails to Fetch</label>
+                                    <input type="number" id="set-emails-to-fetch" class="input-field" style="width: 100%;">
+                                </div>
+                                <div style="display: flex; align-items: flex-end; padding-bottom: 10px;">
+                                    <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 14px;">
+                                        <input type="checkbox" id="set-only-unread"> 
+                                        Unread Only
+                                    </label>
+                                </div>
                             </div>
 
                             <h3 style="margin-bottom: 16px; color: var(--text-dim); margin-top: 32px;">

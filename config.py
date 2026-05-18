@@ -16,13 +16,13 @@ if os.path.exists(_settings_path):
         print(f"Error loading settings.json: {e}")
 
 # Number of emails to fetch in each run
-EMAILS_TO_FETCH = 1
+EMAILS_TO_FETCH = 50
 ONLY_UNREAD = True                          # Set to True to fetch only unread emails, False for all
 
 # LLM Models to use (Ollama)
-STAGE1_MODEL = "mistral"
-STAGE2_MODEL = "llama3"
-STAGE3_MODEL = "mistral"
+STAGE1_MODEL = "llama3.1"
+STAGE2_MODEL = "llama3.1"
+STAGE3_MODEL = "llama3.1"
 
 # UI Settings
 THEME = "dark"

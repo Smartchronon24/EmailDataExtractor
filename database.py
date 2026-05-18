@@ -147,7 +147,8 @@ class EmailStore:
             cursor = conn.cursor(dictionary=True)
             # 1. Check exact message ID
             cursor.execute("SELECT status FROM processed_emails WHERE message_id = %s", (current_message_id,))
-            if cursor.fetchone(): return "EXACT_MATCH"
+            row = cursor.fetchone()
+            if row: return f"MATCH_{row['status']}"
 
             # 2. Check Conversation Thread
             if conversation_id:
@@ -187,7 +188,7 @@ class EmailStore:
                 INSERT INTO processed_emails 
                 (message_id, conversation_id, sender_email, subject, received_at, intent, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE status = VALUES(status)
+                ON DUPLICATE KEY UPDATE status = IF(status = 'REPLIED', 'REPLIED', VALUES(status))
             """
             # Outlook timestamps are often '2024-05-12T13:34:17Z'
             if received_at:
