@@ -30,26 +30,58 @@ async def stage0_deduplicate(subject, body, sender, conv_id, msg_id):
         semantic_match_json = get_semantic_similarities(subject, body, sender)
         semantic_match = None
         if "No similar emails" not in semantic_match_json:
-            semantic_match = json.loads(semantic_match_json)
+            try:
+                semantic_match = json.loads(semantic_match_json)
+            except Exception:
+                pass
 
-        # 1.5 HARD-CODED SAFETY OVERRIDE
-        if "MATCH_" in thread_status or thread_status == 'THREAD_REPLIED':
+        # 2. RESOLVE SEMANTIC STATUS IN MYSQL
+        semantic_status = None
+        if semantic_match:
+            matched_msg_id = semantic_match.get('message_id')
+            matched_conv_id = semantic_match.get('conversation_id')
+            if matched_msg_id or matched_conv_id:
+                semantic_status = check_thread_status(matched_conv_id, sender, matched_msg_id)
+
+        # 3. STATE MACHINE PRIORITIES (HARD-CODED SAFETY OVERRIDES)
+        
+        # Priority 1: Current thread has already been replied to
+        if thread_status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System matched this record in MySQL (Status: {thread_status})."
+                "reasoning": f"System matched this record in MySQL as already replied (Status: {thread_status})."
             }
             print(f"[DECISION]: {final_result['decision']} (Forced by DB: {thread_status})")
             return final_result
 
-        if semantic_match:
+        # Priority 2: A semantically similar email has already been replied to
+        if semantic_status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System found a highly similar email in a different thread (Similarity: {semantic_match.get('similarity', 0)}%). Subject: '{semantic_match.get('metadata', {}).get('subject', 'No Subject')}'."
+                "reasoning": f"System found a semantically identical email that has already been replied to (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status})."
             }
-            print(f"[DECISION]: {final_result['decision']} (Forced by VectorDB)")
+            print(f"[DECISION]: {final_result['decision']} (Forced by Semantic DB Match: {semantic_status})")
             return final_result
 
-        # If EVERYTHING is empty/null, it's definitely NEW. No need to even ask the AI.
+        # Priority 3: Current thread is processed but pending reply
+        if thread_status == 'MATCH_PENDING':
+            final_result = {
+                "decision": "DUPLICATE",
+                "reasoning": f"System matched this record in MySQL as pending reply (Status: {thread_status})."
+            }
+            print(f"[DECISION]: {final_result['decision']} (Forced by DB: {thread_status})")
+            return final_result
+
+        # Priority 4: A semantically similar email is processed but pending reply
+        if semantic_status == 'MATCH_PENDING':
+            final_result = {
+                "decision": "DUPLICATE",
+                "reasoning": f"System found a semantically identical email that is pending reply (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status})."
+            }
+            print(f"[DECISION]: {final_result['decision']} (Forced by Semantic DB Match: {semantic_status})")
+            return final_result
+
+        # Priority 5: Pure fresh inquiry
         if thread_status == "NEW" and not semantic_match:
             final_result = {
                 "decision": "NEW",
