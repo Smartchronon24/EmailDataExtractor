@@ -1,4 +1,4 @@
-# EmailDataExtractor 📧🤖 (Branch: pipeline-stabilization)
+# EmailDataExtractor 📧🤖 (Branch: Fix-Dups)
 
 An advanced, production-grade AI Email Orchestration Platform. This platform features a fully-realized multi-stage agentic pipeline, a **RAG-enhanced Flask Dashboard**, a highly robust database deduplication state machine, and a human-in-the-loop draft editor.
 
