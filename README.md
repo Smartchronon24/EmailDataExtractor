@@ -15,6 +15,7 @@ Our architecture partitions email analysis into discrete agentic phases to ensur
 ### 1. Stage 0: Deduplication (Deterministic & Entity-Level Overrides)
 Before launching heavy LLMs, the platform runs a **prioritized state machine** comparing the message ID, conversation thread, and ChromaDB vector semantics.
 *   **Safety Overrides:** Instantly overrides decisions to `DUPLICATE` if highly similar semantic records exist, stopping logic flips on small models.
+*   **LLM Bypass & Early Exit [NEW]:** If a duplicate is confirmed by Stage 0, the pipeline immediately halts and bypasses Stages 1 and 2 (saving heavy LLM compute). It reconstructs the dashboard view directly from VectorDB's metadata, while still safely logging the new message into MySQL to ensure reply status updates work perfectly.
 *   **State Alignment:** Resolves the status of semantically similar emails across different conversation threads to identify whether an inquiry has already been replied to, showing a red warning outline.
 *   **Bulletproof Entity ID Matching [NEW]:** Directly queries ChromaDB metadata for past emails referencing the exact same `invoice_id` or `tracking_id` parsed from the active body. If any past matching thread is `REPLIED` or `PENDING` in MySQL, it forces the corresponding `DUPLICATE` state, fully protecting against cross-thread duplication.
 
