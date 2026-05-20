@@ -43,13 +43,46 @@ async def stage0_deduplicate(subject, body, sender, conv_id, msg_id):
             if matched_msg_id or matched_conv_id:
                 semantic_status = check_thread_status(matched_conv_id, sender, matched_msg_id)
 
+        # 2b. RESOLVE ENTITY ID STATUS IN MYSQL
+        entity_status = None
+        matched_entity_id = None
+        from vectorstore import VectorStore
+        from database import InvoiceDB, EmailStore
+        try:
+            vs = VectorStore()
+            entity_msg_ids = []
+            for inv_id in extracted_ids.get("invoice_ids", []):
+                entity_msg_ids.extend(vs.find_by_entities(invoice_id=inv_id))
+            for trk_id in extracted_ids.get("tracking_ids", []):
+                entity_msg_ids.extend(vs.find_by_entities(tracking_id=trk_id))
+            
+            # Exclude the current message ID from matches
+            entity_msg_ids = [m_id for m_id in entity_msg_ids if m_id != msg_id]
+            
+            if entity_msg_ids:
+                db_inst = InvoiceDB()
+                store_inst = EmailStore(db_inst)
+                for matched_m_id in entity_msg_ids:
+                    # check_duplicate returns MATCH_REPLIED, THREAD_REPLIED, or MATCH_PENDING
+                    status = store_inst.check_duplicate(None, sender, matched_m_id)
+                    if status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
+                        entity_status = 'MATCH_REPLIED'
+                        matched_entity_id = matched_m_id
+                        break
+                    elif status == 'MATCH_PENDING':
+                        entity_status = 'MATCH_PENDING'
+                        matched_entity_id = matched_m_id
+        except Exception as entity_err:
+            print(f"[STAGE 0] Warning: Entity-based duplication check failed: {entity_err}")
+
         # 3. STATE MACHINE PRIORITIES (HARD-CODED SAFETY OVERRIDES)
         
         # Priority 1: Current thread has already been replied to
         if thread_status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System matched this record in MySQL as already replied (Status: {thread_status})."
+                "reasoning": f"System matched this record in MySQL as already replied (Status: {thread_status}).",
+                "matched_msg_id": msg_id
             }
             print(f"[DECISION]: {final_result['decision']} (Forced by DB: {thread_status})")
             return final_result
@@ -58,16 +91,28 @@ async def stage0_deduplicate(subject, body, sender, conv_id, msg_id):
         if semantic_status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System found a semantically identical email that has already been replied to (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status})."
+                "reasoning": f"System found a semantically identical email that has already been replied to (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status}).",
+                "matched_msg_id": semantic_match.get('message_id')
             }
             print(f"[DECISION]: {final_result['decision']} (Forced by Semantic DB Match: {semantic_status})")
+            return final_result
+
+        # Priority 2b: An email with the same Invoice/Tracking ID has already been replied to
+        if entity_status in ['MATCH_REPLIED', 'THREAD_REPLIED']:
+            final_result = {
+                "decision": "DUPLICATE",
+                "reasoning": f"System found a past email referencing the same Invoice/Tracking ID that has already been replied to (MySQL: {entity_status}, Match ID: {matched_entity_id[:12]}...).",
+                "matched_msg_id": matched_entity_id
+            }
+            print(f"[DECISION]: {final_result['decision']} (Forced by Entity ID DB Match: {entity_status})")
             return final_result
 
         # Priority 3: Current thread is processed but pending reply
         if thread_status == 'MATCH_PENDING':
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System matched this record in MySQL as pending reply (Status: {thread_status})."
+                "reasoning": f"System matched this record in MySQL as pending reply (Status: {thread_status}).",
+                "matched_msg_id": msg_id
             }
             print(f"[DECISION]: {final_result['decision']} (Forced by DB: {thread_status})")
             return final_result
@@ -76,13 +121,24 @@ async def stage0_deduplicate(subject, body, sender, conv_id, msg_id):
         if semantic_status == 'MATCH_PENDING':
             final_result = {
                 "decision": "DUPLICATE",
-                "reasoning": f"System found a semantically identical email that is pending reply (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status})."
+                "reasoning": f"System found a semantically identical email that is pending reply (Similarity: {semantic_match.get('similarity', 0)}%, MySQL: {semantic_status}).",
+                "matched_msg_id": semantic_match.get('message_id')
             }
             print(f"[DECISION]: {final_result['decision']} (Forced by Semantic DB Match: {semantic_status})")
             return final_result
 
+        # Priority 4b: An email with the same Invoice/Tracking ID is processed but pending reply
+        if entity_status == 'MATCH_PENDING':
+            final_result = {
+                "decision": "DUPLICATE",
+                "reasoning": f"System found a past email referencing the same Invoice/Tracking ID that is pending reply (MySQL: {entity_status}, Match ID: {matched_entity_id[:12]}...).",
+                "matched_msg_id": matched_entity_id
+            }
+            print(f"[DECISION]: {final_result['decision']} (Forced by Entity ID DB Match: {entity_status})")
+            return final_result
+
         # Priority 5: Pure fresh inquiry
-        if thread_status == "NEW" and not semantic_match:
+        if thread_status == "NEW" and not semantic_match and not entity_status:
             final_result = {
                 "decision": "NEW",
                 "reasoning": "Database and VectorStore are empty for this sender. Confirmed fresh inquiry."
@@ -135,6 +191,11 @@ async def stage0_deduplicate(subject, body, sender, conv_id, msg_id):
             else: decision = "NEW"
 
             final_result = {"decision": decision, "reasoning": reasoning}
+            if decision == "DUPLICATE":
+                final_result["matched_msg_id"] = msg_id # default fallback
+                if semantic_match and semantic_match.get('message_id'):
+                    final_result["matched_msg_id"] = semantic_match.get('message_id')
+            
             print(f"[DECISION]: {final_result['decision']}")
             print(f"[REASON]:   {final_result['reasoning']}")
             return final_result

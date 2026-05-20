@@ -5,7 +5,7 @@ from processor import EmailProcessor
 from doc_processor import DocumentProcessor
 from database import InvoiceDB
 from vectorstore import VectorStore
-from KEYS import CLIENT_ID, AUTHORITY, SCOPES
+from KEYS import CLIENT_ID, AUTHORITY, SCOPES, USER_EMAIL
 from config import EMAILS_TO_FETCH, RAW_DATA_PATH, PROCESSED_DATA_PATH, ENABLE_REPLY_GENERATION, ONLY_UNREAD, ENABLE_RAG
 
 class EmailFetcher:
@@ -13,23 +13,70 @@ class EmailFetcher:
     Handles authentication and fetching data from Microsoft Graph API.
     Acts as the Data Model/Service in the MVC architecture.
     """
-    def __init__(self, client_id, authority, scopes):
+    def __init__(self, client_id, authority, scopes, user_email=None):
+        import os
         self.client_id = client_id
         self.authority = authority
         self.scopes = scopes
-        self.app = msal.PublicClientApplication(self.client_id, authority=self.authority)
+        self.user_email = user_email
+        
+        # Absolute path next to main.py to prevent location mismatch errors during Flask execution
+        dir_path = os.path.dirname(os.path.abspath(__file__))
+        self.cache_filename = os.path.join(dir_path, "token_cache.bin")
+        
+        # Initialize persistent MSAL cache
+        self.cache = msal.SerializableTokenCache()
+        if os.path.exists(self.cache_filename):
+            try:
+                with open(self.cache_filename, "r") as f:
+                    self.cache.deserialize(f.read())
+                print(f"[MSAL] Loaded persistent token cache from {self.cache_filename}.")
+            except Exception as e:
+                print(f"[MSAL] Warning: Could not deserialize token cache: {e}")
+
+        # Always use Public Client App with cached delegate for personal Outlook accounts
+        self.app = msal.PublicClientApplication(
+            self.client_id, 
+            authority="https://login.microsoftonline.com/common",
+            token_cache=self.cache
+        )
+        print("[MSAL] Initialized Public Client with Persistent Token Cache.")
+
+    def _save_cache(self):
+        """Saves MSAL token cache state to disk if changed."""
+        try:
+            if self.cache.has_state_changed:
+                with open(self.cache_filename, "w") as f:
+                    f.write(self.cache.serialize())
+                print(f"[MSAL] OK: Saved updated token cache to {self.cache_filename}.")
+        except Exception as e:
+            print(f"[MSAL] Warning: Could not save token cache to disk: {e}")
+
+    def _get_base_url(self):
+        """Resolves target mailbox URL endpoint root."""
+        return "https://graph.microsoft.com/v1.0/me"
 
     def get_access_token(self):
-        """Attempts to acquire a token from the cache, then interactively."""
+        """Acquires token silently from persistent cache, falling back to interactive on first login."""
         accounts = self.app.get_accounts()
         if accounts:
+            print(f"[MSAL] Found account in cache: {accounts[0]['username']}. Attempting silent fetch...")
             result = self.app.acquire_token_silent(self.scopes, account=accounts[0])
-            if result:
+            if result and "access_token" in result:
+                self._save_cache()
                 return result.get('access_token')
+            else:
+                print("[MSAL] Silent fetch failed or token expired. Falling back to interactive...")
 
-        # Fallback to interactive login (Standard Desktop/Terminal mode)
+        # Fallback to interactive login (opens browser ONCE, then caches forever)
+        print("[MSAL] First-time login: Opening web browser for authentication...")
         result = self.app.acquire_token_interactive(scopes=self.scopes)
-        return result.get('access_token')
+        if result and "access_token" in result:
+            self._save_cache()
+            return result.get('access_token')
+        else:
+            print(f"[MSAL] Error during interactive login: {result.get('error_description', result.get('error'))}")
+            return None
 
     def fetch_emails(self, access_token, top=1, only_unread=True):
         """Fetches emails from the Inbox folder."""
@@ -38,7 +85,7 @@ class EmailFetcher:
         }
         
         # Build the URL with optional filter
-        base_url = f"https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={top}"
+        base_url = f"{self._get_base_url()}/mailFolders/inbox/messages?$top={top}"
         if only_unread:
             base_url += "&$filter=isRead eq false"
             
@@ -58,7 +105,7 @@ class EmailFetcher:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
+        url = f"{self._get_base_url()}/messages/{message_id}"
         payload = {"isRead": True}
         requests.patch(url, headers=headers, json=payload)
 
@@ -68,14 +115,14 @@ class EmailFetcher:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
+        url = f"{self._get_base_url()}/messages/{message_id}"
         payload = {"isRead": False}
         requests.patch(url, headers=headers, json=payload)
 
     def fetch_attachments(self, access_token, message_id):
         """Fetches attachments for a specific message."""
         headers = {"Authorization": f"Bearer {access_token}"}
-        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments"
+        url = f"{self._get_base_url()}/messages/{message_id}/attachments"
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
@@ -90,7 +137,7 @@ class EmailFetcher:
         }
         
         # Endpoint to create a reply draft and send it in one go
-        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/reply"
+        url = f"{self._get_base_url()}/messages/{message_id}/reply"
         
         payload = {
             "comment": reply_content
@@ -116,7 +163,7 @@ class EmailController:
         self.authority = AUTHORITY
         self.scopes = SCOPES
         
-        self.fetcher = EmailFetcher(self.client_id, self.authority, self.scopes)
+        self.fetcher = EmailFetcher(self.client_id, self.authority, self.scopes, USER_EMAIL)
         self.processor = EmailProcessor()
         self.db = InvoiceDB()
         

@@ -60,7 +60,8 @@ class EmailProcessor:
 
         system_prompt = f"""
         You are a Strategic Email Analyst. Goal: determine intent and priority.
-        TOOLS: `lookup_customer`, `get_semantic_similarities`.
+        TOOLS: `lookup_customer`, `get_semantic_similarities`, `check_thread_history`, `get_customer_invoices`.
+        Use `check_thread_history` to understand the flow of ongoing conversations, and `get_customer_invoices` for customer billing details.
         OUTPUT JSON ONLY: {{"intent": "...", "priority": "...", "reasoning": "..."}}
         """
         messages = [
@@ -70,8 +71,13 @@ class EmailProcessor:
         try:
             client = ollama.AsyncClient()
             print(f"\n>>> [STAGE 1 AGENT] Analyzing Strategy...")
+            
+            # Stage 1 only needs strategic/analytical tools. It does not need extract_document_text or direct lookup_invoice/lookup_shipment.
+            s1_tool_names = ['lookup_customer', 'get_semantic_similarities', 'check_thread_history', 'get_customer_invoices']
+            s1_tools = [t for t in OLLAMA_TOOL_SCHEMAS if t['function']['name'] in s1_tool_names]
+            
             for turn in range(3):
-                response = await client.chat(model=self.stage1_model, messages=messages, tools=OLLAMA_TOOL_SCHEMAS)
+                response = await client.chat(model=self.stage1_model, messages=messages, tools=s1_tools)
                 message = response['message']
                 if message.get('tool_calls'):
                     messages.append(message)
@@ -96,7 +102,7 @@ class EmailProcessor:
         
         system_prompt = f"""
         You are a Data Extraction Agent. Extract IDs and summary.
-        TOOLS: `extract_document_text`, `lookup_invoice`, `lookup_shipment`.
+        TOOLS: `extract_document_text`.
         ATTACHMENTS AVAILABLE: {[a.get('name') for a in attachments] if attachments else "None"}
         OUTPUT JSON ONLY: {{"intent": "...", "category": "...", "entities": {{"invoice_number": "...", "tracking_number": "..."}}, "summary": "...", "thought_process": "..."}}
         """
@@ -108,13 +114,23 @@ class EmailProcessor:
             client = ollama.AsyncClient()
             print(f">>> [STAGE 2 AGENT] Extracting Entities...")
             
-            # Dynamically filter tools to only include extract_document_text if attachments are actually present
-            s2_tools = OLLAMA_TOOL_SCHEMAS
-            if not attachments:
-                s2_tools = [t for t in OLLAMA_TOOL_SCHEMAS if t['function']['name'] != 'extract_document_text']
+            # Stage 2 only needs extract_document_text if attachments exist. It does NOT need database tools.
+            s2_tools = []
+            if attachments:
+                extract_tool = [t for t in OLLAMA_TOOL_SCHEMAS if t['function']['name'] == 'extract_document_text']
+                if extract_tool:
+                    s2_tools = extract_tool
+
+            # If s2_tools is empty, we omit the tools parameter entirely to run in regular JSON generation mode.
+            chat_kwargs = {
+                "model": self.stage2_model,
+                "messages": messages
+            }
+            if s2_tools:
+                chat_kwargs["tools"] = s2_tools
 
             for turn in range(4):
-                response = await client.chat(model=self.stage2_model, messages=messages, tools=s2_tools)
+                response = await client.chat(**chat_kwargs)
                 message = response['message']
                 if message.get('tool_calls'):
                     messages.append(message)

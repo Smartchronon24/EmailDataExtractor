@@ -12,13 +12,15 @@ Our architecture partitions email analysis into discrete agentic phases to ensur
 [Outlook Fetch] ──> [Stage 0: Deduplication] ──> [Stage 1: Strategy] ──> [Stage 2: Extraction] ──> [Stage 3: Drafting] ──> [Human Review & Send]
 ```
 
-### 1. Stage 0: Deduplication (Deterministic State Machine)
+### 1. Stage 0: Deduplication (Deterministic & Entity-Level Overrides)
 Before launching heavy LLMs, the platform runs a **prioritized state machine** comparing the message ID, conversation thread, and ChromaDB vector semantics.
 *   **Safety Overrides:** Instantly overrides decisions to `DUPLICATE` if highly similar semantic records exist, stopping logic flips on small models.
 *   **State Alignment:** Resolves the status of semantically similar emails across different conversation threads to identify whether an inquiry has already been replied to, showing a red warning outline.
+*   **Bulletproof Entity ID Matching [NEW]:** Directly queries ChromaDB metadata for past emails referencing the exact same `invoice_id` or `tracking_id` parsed from the active body. If any past matching thread is `REPLIED` or `PENDING` in MySQL, it forces the corresponding `DUPLICATE` state, fully protecting against cross-thread duplication.
 
 ### 2. Stage 1: Strategy Mapping
 The agent reads the email content, evaluates the RAG contexts, and maps a support strategy (e.g. tracking dispute, payment issue, cancel order).
+*   **Strategic Agent Prompts:** Updated to guide the agent to dynamically leverage new strategic tools (`check_thread_history` and `get_customer_invoices`) during analysis turns.
 
 ### 3. Stage 2: Entity Extraction & Dynamic Tools
 The agent acts autonomously to retrieve missing information from database systems.
@@ -31,6 +33,11 @@ Generates replies based strictly on pre-fetched business data from relational da
 ---
 
 ## 🌟 Key Features & Toolsets
+
+### 🔐 100% Headless MSAL Authentication (Personal & Enterprise)
+Bypasses constant browser windows by utilizing a **persistent absolute-path token cache** (`token_cache.bin` next to `main.py`).
+*   **Silent Extraction:** After logging in once through the browser, the Public Client app silently refreshes and extracts tokens in less than `0.2s` from the cache, enabling true headless background daemon service for personal `@outlook.com` / `@hotmail.com` accounts.
+*   **ASCII Safe Logging:** Eliminates terminal emoji characters (e.g. `🛠️` in tool logs) to ensure complete compatibility across Windows command prompts, avoiding charmap encoding errors.
 
 ### 🧠 RAG-Enhanced Semantic Memory (ChromaDB)
 *   Queries ChromaDB to locate semantically similar historic threads from the same customer.

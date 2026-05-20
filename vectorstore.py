@@ -58,16 +58,33 @@ class VectorStore:
             body = clean_body if clean_body else raw_email.get("body", {}).get("content", "")
             doc_text = self._build_document_text(subject, body)
 
-            # Store metadata alongside the embedding for inspection
+            # Resolve invoice_id / tracking_id from multiple possible Stage 2 key names
+            entities = extraction.get("entities", {}) if extraction else {}
+            invoice_id = (
+                entities.get("invoice_id") or
+                entities.get("invoice_number") or
+                entities.get("invoice") or ""
+            )
+            tracking_id = (
+                entities.get("tracking_id") or
+                entities.get("tracking_number") or
+                entities.get("tracking") or ""
+            )
+
+            # Store metadata alongside the embedding for inspection.
+            # IMPORTANT: message_id and conversation_id MUST be stored so that
+            # find_semantic_duplicate can resolve DB status for matched emails.
             metadata = {
-                "subject":      raw_email.get("subject", ""),
-                "sender":       raw_email.get("from", {}).get("emailAddress", {}).get("address", ""),
-                "intent":       extraction.get("intent", "unknown") if extraction else "unknown",
-                "invoice_id":   extraction.get("entities", {}).get("invoice_id", ""),
-                "tracking_id":  extraction.get("entities", {}).get("tracking_id", ""),
-                "timestamp":    raw_email.get("receivedDateTime", ""),
-                "has_invoice":  str(bool(db_context and db_context.get("invoice"))),
-                "has_shipment": str(bool(db_context and db_context.get("shipment"))),
+                "message_id":      message_id,
+                "conversation_id": raw_email.get("conversationId", ""),
+                "subject":         raw_email.get("subject", ""),
+                "sender":          raw_email.get("from", {}).get("emailAddress", {}).get("address", ""),
+                "intent":          extraction.get("intent", "unknown") if extraction else "unknown",
+                "invoice_id":      invoice_id,
+                "tracking_id":     tracking_id,
+                "timestamp":       raw_email.get("receivedDateTime", ""),
+                "has_invoice":     str(bool(db_context and db_context.get("invoice"))),
+                "has_shipment":    str(bool(db_context and db_context.get("shipment"))),
             }
 
             self.collection.add(
@@ -85,27 +102,62 @@ class VectorStore:
         Checks if a highly similar email from the same sender exists.
         Returns the most similar metadata if distance < threshold.
         Distance 0.0 = identical, 1.0 = completely different (Cosine).
+
+        The returned dict exposes message_id and conversation_id at the TOP LEVEL
+        so that stage0_agent.py can immediately resolve the DB status without
+        digging into nested keys.
         """
         try:
             query_text = self._build_document_text(subject, body)
+            # ids are always returned by ChromaDB — no need to add to include
             results = self.collection.query(
                 query_texts=[query_text],
                 n_results=1,
                 where={"sender": sender_email},
                 include=["metadatas", "distances"]
             )
-            
+
             if results["distances"] and results["distances"][0]:
                 dist = results["distances"][0][0]
+                meta = results["metadatas"][0][0]
+                # ChromaDB ids list mirrors the results order
+                matched_msg_id = results["ids"][0][0] if results.get("ids") and results["ids"][0] else ""
+
+                print(f"[VectorDB] Semantic check — dist={dist:.4f}, threshold={threshold}, id={matched_msg_id[:12] if matched_msg_id else 'N/A'}...")
+
                 if dist < threshold:
                     return {
-                        "metadata": results["metadatas"][0][0],
-                        "similarity": round((1 - dist) * 100, 1)
+                        # Top-level keys stage0_agent.py reads directly
+                        "message_id":      matched_msg_id,
+                        "conversation_id": meta.get("conversation_id", ""),
+                        # Full metadata for display / debugging
+                        "metadata":        meta,
+                        "similarity":      round((1 - dist) * 100, 1),
                     }
             return None
         except Exception as e:
             print(f"[VectorDB] Duplicate check failed: {e}")
             return None
+
+    def find_by_entities(self, invoice_id=None, tracking_id=None) -> list[str]:
+        """
+        Retrieves message IDs of past emails matching the exact invoice_id or tracking_id.
+        Uses direct metadata filters for extreme speed and accuracy (no embeddings required).
+        """
+        message_ids = []
+        try:
+            if invoice_id:
+                res = self.collection.get(where={"invoice_id": invoice_id})
+                if res and res.get("ids"):
+                    message_ids.extend(res["ids"])
+            if tracking_id:
+                res = self.collection.get(where={"tracking_id": tracking_id})
+                if res and res.get("ids"):
+                    message_ids.extend(res["ids"])
+        except Exception as e:
+            print(f"[VectorDB] Entity ID metadata lookup failed: {e}")
+        return list(set(message_ids))
+
 
     def query(self, query_text: str, top_k: int = RAG_TOP_K) -> list[str]:
         """

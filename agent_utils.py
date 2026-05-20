@@ -18,7 +18,7 @@ def lookup_invoice(invoice_id: str = None, **kwargs) -> str:
         invoice_id = kwargs.get('invoice_number') or kwargs.get('id') or kwargs.get('invoice_id')
     if not invoice_id:
         return "Error: Missing required argument 'invoice_id'"
-    print(f"    🛠️ [EXECUTING TOOL]: lookup_invoice({invoice_id})")
+    print(f"    [TOOL]: lookup_invoice({invoice_id})")
     try:
         db = InvoiceDB()
         result = db.lookup_invoice(invoice_id)
@@ -31,7 +31,7 @@ def lookup_shipment(tracking_id: str = None, **kwargs) -> str:
         tracking_id = kwargs.get('tracking_number') or kwargs.get('id') or kwargs.get('tracking_id')
     if not tracking_id:
         return "Error: Missing required argument 'tracking_id'"
-    print(f"    🛠️ [EXECUTING TOOL]: lookup_shipment({tracking_id})")
+    print(f"    [TOOL]: lookup_shipment({tracking_id})")
     try:
         db = InvoiceDB()
         result = db.lookup_shipment(tracking_id)
@@ -44,7 +44,7 @@ def lookup_customer(email: str = None, **kwargs) -> str:
         email = kwargs.get('email_address') or kwargs.get('sender_email') or kwargs.get('email')
     if not email:
         return "Error: Missing required argument 'email'"
-    print(f"    🛠️ [EXECUTING TOOL]: lookup_customer({email})")
+    print(f"    [TOOL]: lookup_customer({email})")
     try:
         db = InvoiceDB()
         result = db.lookup_customer(email)
@@ -53,7 +53,7 @@ def lookup_customer(email: str = None, **kwargs) -> str:
         return f"Error: {str(e)}"
 
 def check_thread_status(conversation_id: str, sender_email: str, message_id: str, **kwargs) -> str:
-    print(f"    🛠️ [EXECUTING TOOL]: check_thread_status({conversation_id})")
+    print(f"    [TOOL]: check_thread_status({conversation_id})")
     try:
         db = InvoiceDB()
         store = EmailStore(db)
@@ -63,7 +63,7 @@ def check_thread_status(conversation_id: str, sender_email: str, message_id: str
         return f"Error: {str(e)}"
 
 def extract_document_text(base64_content: str, file_type: str, **kwargs) -> str:
-    print(f"    🛠️ [EXECUTING TOOL]: extract_document_text({file_type})")
+    print(f"    [TOOL]: extract_document_text({file_type})")
     try:
         if file_type.lower() == 'pdf':
             return DocumentProcessor.extract_text_from_pdf(base64_content)
@@ -78,7 +78,7 @@ def get_customer_invoices(email: str = None, **kwargs) -> str:
         email = kwargs.get('email_address') or kwargs.get('sender_email') or kwargs.get('email')
     if not email:
         return "Error: Missing required argument 'email'"
-    print(f"    🛠️ [EXECUTING TOOL]: get_customer_invoices({email})")
+    print(f"    [TOOL]: get_customer_invoices({email})")
     try:
         db = InvoiceDB()
         conn = db.get_db_connection()
@@ -108,7 +108,7 @@ def check_thread_history(conversation_id: str = None, **kwargs) -> str:
         conversation_id = kwargs.get('conversation_id')
     if not conversation_id:
         return "Error: Missing required argument 'conversation_id'"
-    print(f"    🛠️ [EXECUTING TOOL]: check_thread_history({conversation_id})")
+    print(f"    [TOOL]: check_thread_history({conversation_id})")
     try:
         db = InvoiceDB()
         conn = db.get_db_connection()

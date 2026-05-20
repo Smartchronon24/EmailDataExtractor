@@ -13,7 +13,7 @@ processed_emails.json
 *.zip
 *.pdf
 workflow.png
-
+*.bin
 # IDE
 .vscode/
 .idea/

@@ -85,6 +85,64 @@ def process_email_stream():
                 else:
                     yield f"data: {json.dumps({'type': 'status', 'message': '✅ Stage 0: New inquiry confirmed.'})}\n\n"
 
+                # If DUPLICATE is detected and we have the matched message ID, bypass Llama entirely
+                matched_msg_id = agent_result.get("matched_msg_id")
+                if decision == "DUPLICATE" and matched_msg_id and controller.vectorstore:
+                    yield f"data: {json.dumps({'type': 'status', 'message': '⚡ Bypassing AI Extraction: Using matched historical data...'})}\n\n"
+                    try:
+                        res = controller.vectorstore.collection.get(ids=[matched_msg_id], include=["metadatas"])
+                        if res and res.get("metadatas") and res["metadatas"][0]:
+                            old_meta = res["metadatas"][0]
+                            extraction = {
+                                "intent": old_meta.get("intent", "general"),
+                                "category": "Duplicate Inquiry",
+                                "entities": {
+                                    "invoice_number": old_meta.get("invoice_id", ""),
+                                    "tracking_number": old_meta.get("tracking_id", "")
+                                },
+                                "summary": "Stage 0 successfully identified this as a duplicate inquiry. Skipped redundant LLM processing."
+                            }
+                            db_context = {
+                                "invoice": controller.db.lookup_invoice(old_meta.get("invoice_id")) if old_meta.get("invoice_id") else None,
+                                "shipment": controller.db.lookup_shipment(old_meta.get("tracking_id")) if old_meta.get("tracking_id") else None,
+                                "customer": controller.db.lookup_customer(sender)
+                            }
+                            query_text = f"SUBJECT: {subject}\n\nBODY: {body_raw[:2000]}"
+                            rag_context = controller.vectorstore.query(query_text)
+                            
+                            final_payload = {
+                                "type": "complete",
+                                "record": {
+                                    "metadata": {"sender": sender, "subject": subject},
+                                    "extraction": extraction,
+                                    "full_context": body_raw
+                                },
+                                "db_context": db_context,
+                                "rag_context": rag_context,
+                                "duplicate_info": agent_result
+                            }
+                            
+                            # MUST log this new email in the DB so that if the user clicks "Send", it can be marked as REPLIED
+                            try:
+                                controller.email_store.log_email(
+                                    msg_id=msg_id,
+                                    conv_id=conv_id,
+                                    sender=sender,
+                                    subject=subject,
+                                    received_at=msg.get('receivedDateTime'),
+                                    intent=extraction.get('intent', 'general'),
+                                    status='PENDING'
+                                )
+                                print(f"[Database] Logged duplicate bypass email {msg_id} as PENDING.")
+                            except Exception as db_err:
+                                print(f"[Database] Warning: Failed to log duplicate email: {db_err}")
+
+                            yield f"data: {json.dumps(final_payload)}\n\n"
+                            return  # Early exit (skip Stages 1 & 2)
+                    except Exception as e:
+                        print(f"Failed to fetch duplicate from VectorDB: {e}")
+                        yield f"data: {json.dumps({'type': 'status', 'message': '⚠️ Failed to load historical context. Falling back to re-extraction.'})}\n\n"
+
                 # 2. RUN PIPELINE (Stages 1 & 2)
                 email_attachments = attachments
                 if msg.get('hasAttachments') and not email_attachments:
@@ -108,15 +166,50 @@ def process_email_stream():
                             record = item["record"]
                             extraction = record["extraction"]
                             
-                            # Final DB check for UI context
-                            inv_id = extraction.get('entities', {}).get('invoice_number')
-                            trk_id = extraction.get('entities', {}).get('tracking_number')
-                            
+                            # Deterministic regex fallback for matching IDs if LLM fails or keys differ
+                            from agent_utils import extract_ids_regex
+                            regex_ids = {}
+                            try:
+                                regex_ids = json.loads(extract_ids_regex(record.get("full_context", "")))
+                            except Exception:
+                                pass
+                                
+                            inv_id = extraction.get('entities', {}).get('invoice_number') or extraction.get('entities', {}).get('invoice_id')
+                            if not inv_id and regex_ids.get('invoice_ids'):
+                                inv_id = regex_ids['invoice_ids'][0]
+                                
+                            trk_id = extraction.get('entities', {}).get('tracking_number') or extraction.get('entities', {}).get('tracking_id')
+                            if not trk_id and regex_ids.get('tracking_ids'):
+                                trk_id = regex_ids['tracking_ids'][0]
+
                             db_context = {
                                 "invoice": controller.db.lookup_invoice(inv_id) if inv_id else None,
                                 "shipment": controller.db.lookup_shipment(trk_id) if trk_id else None,
                                 "customer": controller.db.lookup_customer(sender)
                             }
+                            
+                            # Retrieve RAG context from VectorStore if enabled
+                            rag_context = []
+                            clean_text = record.get("full_context", "")
+                            if controller.vectorstore:
+                                try:
+                                    query_text = f"SUBJECT: {subject}\n\nBODY: {clean_text[:2000]}"
+                                    rag_context = controller.vectorstore.query(query_text)
+                                except Exception as rag_err:
+                                    print(f"[VectorDB] Warning: Failed to query RAG: {rag_err}")
+
+                            # Ingest the newly processed record into VectorStore for future queries
+                            if controller.vectorstore:
+                                try:
+                                    controller.vectorstore.store(
+                                        message_id=msg_id,
+                                        raw_email=msg,
+                                        extraction=extraction,
+                                        db_context=db_context,
+                                        clean_body=clean_text
+                                    )
+                                except Exception as store_err:
+                                    print(f"[VectorDB] Warning: Failed to ingest email into VectorDB: {store_err}")
                             
                             # Log processed email in database
                             try:
@@ -137,6 +230,7 @@ def process_email_stream():
                                 "type": "complete",
                                 "record": record,
                                 "db_context": db_context,
+                                "rag_context": rag_context,
                                 "duplicate_info": agent_result if decision == "DUPLICATE" else None
                             }
                             yield f"data: {json.dumps(final_payload)}\n\n"
