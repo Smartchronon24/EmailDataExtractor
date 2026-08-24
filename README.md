@@ -61,6 +61,8 @@ Validates every extracted invoice ID, tracking number, and customer profile agai
 
 ## 🏗️ System Architecture
 
+![EmailDataExtractor system architecture](architecture.svg)
+
 ```mermaid
 graph TD
     subgraph "External & UI"
